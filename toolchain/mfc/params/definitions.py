@@ -676,13 +676,13 @@ def _load():  # pylint: disable=too-many-locals,too-many-statements
         _r(f"bf_{d}", LOG)
 
     # new
-    for n in ["periodic_forcing", "periodic_ibs", "volume_filter_momentum_eqn", 
+    for n in ["periodic_forcing", "periodic_ibs", "volume_filter_momentum_eqn",
               "compute_particle_drag", "store_levelset", "slab_domain_decomposition",
-              "q_filtered_wrt"]:
+              "q_filtered_wrt", "forcing_wrt"]:
         _r(n, LOG)
     for n in ["mom_f_idx", "forcing_window", "t_step_start_stats"]:
         _r(n, INT)
-    for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt", 
+    for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt",
               "fluid_volume_fraction", "filter_width"]:
         _r(n, REAL)
 

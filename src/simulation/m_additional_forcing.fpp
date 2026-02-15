@@ -12,7 +12,8 @@ module m_additional_forcing
     implicit none
 
     private; public :: s_initialize_additional_forcing_module, &
- s_finalize_additional_forcing_module, s_compute_periodic_forcing
+ s_finalize_additional_forcing_module, s_compute_periodic_forcing, &
+ s_update_controllers
 
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
     real(wp) :: volfrac_phi
@@ -25,6 +26,9 @@ module m_additional_forcing
 
     $:GPU_DECLARE(create='[q_periodic_force, avg_coeff]')
     $:GPU_DECLARE(create='[spatial_rho, spatial_u, spatial_eps, phase_rho, phase_u, phase_eps]')
+
+    ! control params
+    real(wp) :: integral_u, integral_M
 
 contains
 
@@ -74,6 +78,15 @@ contains
 
         if (forcing_wrt .and. proc_rank == 0) then
             open (unit=102, file='forcing.bin', status='replace', form='unformatted', access='stream', action='write')
+        end if
+
+        ! controls
+        ! initialize integrals
+        integral_u = 0._wp
+        integral_M = 0._wp
+
+        if (forcing_wrt .and. proc_rank == 0) then
+            open (unit=103, file='controls.bin', status='replace', form='unformatted', access='stream', action='write')
         end if
 
     end subroutine s_initialize_additional_forcing_module
@@ -192,12 +205,98 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, spatial_rho_glb, spatial_u_glb, spatial_eps_glb
+            print *, 'FORCING:', spatial_rho_glb, spatial_u_glb, spatial_eps_glb
             write (102) spatial_rho_glb, spatial_u_glb, spatial_eps_glb
             flush (102)
         end if
 
     end subroutine s_compute_periodic_forcing
+
+    subroutine s_update_controllers(q_cons_vf)
+        type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
+        real(wp) :: Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc, rho, dVol, rho_avg, rhou_avg, u_avg, cs_avg, pres
+        real(wp) :: Re_star, M_star, mu, Dp, u_star_rel, gamma, Mach, u_rel
+        real(wp) :: err_u, err_M
+        real(wp) :: tau_p, K_Pg, K_Ig, K_Pp, K_Ip
+        integer :: i, j, k, l
+
+        ! these need to be moved to case file/setup
+        Re_star = 1500._wp
+        M_star = 1.2_wp
+        mu = 1._wp/fluid_pp(1)%Re(1)
+        Dp = 2._wp*patch_ib(1)%radius
+        gamma = 1._wp/fluid_pp(1)%gamma + 1._wp
+
+        tau_p = 0.002759532353827804             !2._wp/9._wp*(patch_ib(1)%mass/(4._wp/3._wp*pi*patch_ib(1)%radius**3))*patch_ib(1)%radius**2/mu
+        K_Pg = -1._wp/(10._wp*tau_p)
+        K_Ig = 0._wp                             !-1._wp/(8._wp*tau_p**2)
+        K_Pp = -2._wp*101325/(100._wp*M_star)
+        K_Ip = 0._wp                             !-2._wp*101325/(75._wp*M_star*tau_p)
+
+        ! intialize
+        Vp_avg = 0._wp
+        rho_avg_loc = 0._wp
+        rhou_avg_loc = 0._wp
+
+        ! get average particle velocity
+        do i = 1, num_ibs
+            Vp_avg = Vp_avg + patch_ib(i)%vel(mom_f_idx)
+        end do
+
+        Vp_avg = Vp_avg/num_ibs
+
+        ! get averages of density, momentum, soundspeed
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    if (ib_markers%sf(i, j, k) == 0) then
+                        rho = 0._wp
+                        do l = 1, num_fluids
+                            rho = rho + q_cons_vf(contxb + l - 1)%sf(i, j, k)
+                        end do
+                        dVol = dx(i)*dy(j)*dz(k)
+                        rho_avg_loc = rho_avg_loc + (rho*dVol)
+                        rhou_avg_loc = rhou_avg_loc + (q_cons_vf(momxb + mom_f_idx - 1)%sf(i, j, k)*dVol)
+                        pres = (gamma - 1)*(q_cons_vf(E_idx)%sf(i, j, k) - 0.5_wp*( &
+                                            q_cons_vf(momxb)%sf(i, j, k)**2 + &
+                                            q_cons_vf(momxb + 1)%sf(i, j, k)**2 + &
+                                            q_cons_vf(momxb + 2)%sf(i, j, k)**2)/rho) ! rho*epsilon*(gamma-1)
+                        cs_avg_loc = cs_avg_loc + (sqrt(gamma*pres/rho)*dVol)
+                    end if
+                end do
+            end do
+        end do
+
+        ! reduction sum across entire domain
+        call s_mpi_allreduce_sum(rho_avg_loc, rho_avg)
+        call s_mpi_allreduce_sum(rhou_avg_loc, rhou_avg)
+        call s_mpi_allreduce_sum(cs_avg_loc, cs_avg)
+
+        rho_avg = rho_avg*avg_coeff
+        rhou_avg = rhou_avg*avg_coeff
+        cs_avg = cs_avg*avg_coeff
+        u_avg = rhou_avg/rho_avg
+        u_rel = u_avg - Vp_avg
+
+        u_star_rel = Re_star*mu/(rho_avg*Dp)
+        Mach = u_rel/cs_avg
+
+        err_u = u_star_rel - u_rel
+        err_M = M_star - Mach
+
+        integral_u = integral_u + (dt*err_u)
+        integral_M = integral_M + (dt*err_M)
+
+        g_y = g_y + K_Pg*err_u + K_Ig*integral_u
+        P_inf_ref = P_inf_ref + K_Pp*err_M + K_Ip*integral_M
+
+        if (forcing_wrt .and. proc_rank == 0) then
+            print *, 'CONTROL:', g_y, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
+            write (103) g_y, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
+            flush (103)
+        end if
+
+    end subroutine s_update_controllers
 
     subroutine s_finalize_additional_forcing_module
         integer :: i
@@ -212,6 +311,10 @@ contains
 
         if (forcing_wrt .and. proc_rank == 0) then
             close (102)
+        end if
+
+        if (forcing_wrt .and. proc_rank == 0) then
+            close (103)
         end if
     end subroutine s_finalize_additional_forcing_module
 

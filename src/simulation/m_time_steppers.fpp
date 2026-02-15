@@ -51,6 +51,8 @@ module m_time_steppers
 
     use m_derived_variables
 
+    use m_additional_forcing
+
     implicit none
 
     type(vector_field), allocatable, dimension(:) :: q_cons_ts !<
@@ -650,6 +652,9 @@ contains
             end if
 
         end do
+
+        ! update body force and pressure_infty
+        call s_update_controllers(q_cons_ts(1)%vf)
 
         ! Adaptive dt: final stage
         if (adap_dt) call s_adaptive_dt_bubble(3)
