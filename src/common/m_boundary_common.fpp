@@ -1,9 +1,8 @@
 !>
-!! @file m_boundary_conditions_common.fpp
-!! @brief Contains module m_boundary_conditions_common
+!! @file
+!! @brief Contains module m_boundary_common
 
-!> @brief The purpose of the module is to apply noncharacteristic and processor
-!! boundary conditions
+!> @brief Noncharacteristic and processor boundary condition application for ghost cells and buffer regions
 #:include 'case.fpp'
 #:include 'macros.fpp'
 
@@ -53,6 +52,7 @@ module m_boundary_common
 
 contains
 
+    !> @brief Allocates and sets up boundary condition buffer arrays for all coordinate directions.
     impure subroutine s_initialize_boundary_common_module()
 
         integer :: i, j
@@ -467,6 +467,7 @@ contains
 
     end subroutine s_ghost_cell_extrapolation
 
+    !> @brief Applies reflective (symmetry) boundary conditions by mirroring primitive variables and flipping the normal velocity component.
     subroutine s_symmetry(q_prim_vf, bc_dir, bc_loc, k, l, pb_in, mv_in)
         $:GPU_ROUTINE(parallelism='[seq]')
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
@@ -727,6 +728,7 @@ contains
 
     end subroutine s_symmetry
 
+    !> @brief Applies periodic boundary conditions by copying values from the opposite domain boundary.
     subroutine s_periodic(q_prim_vf, bc_dir, bc_loc, k, l, pb_in, mv_in)
         $:GPU_ROUTINE(parallelism='[seq]')
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
@@ -980,6 +982,7 @@ contains
 
     end subroutine s_axis
 
+    !> @brief Applies slip wall boundary conditions by extrapolating scalars and reflecting the wall-normal velocity component.
     subroutine s_slip_wall(q_prim_vf, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_slip_wall',parallelism='[seq]', &
             & cray_inline=True)
@@ -1071,6 +1074,7 @@ contains
 
     end subroutine s_slip_wall
 
+    !> @brief Applies no-slip wall boundary conditions by reflecting and negating all velocity components at the wall.
     subroutine s_no_slip_wall(q_prim_vf, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_no_slip_wall',parallelism='[seq]', &
             & cray_inline=True)
@@ -1199,6 +1203,7 @@ contains
 
     end subroutine s_no_slip_wall
 
+    !> @brief Applies Dirichlet boundary conditions by prescribing ghost cell values from stored boundary buffers.
     subroutine s_dirichlet(q_prim_vf, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_dirichlet',parallelism='[seq]', &
             & cray_inline=True)
@@ -1268,6 +1273,7 @@ contains
 
     end subroutine s_dirichlet
 
+    !> @brief Extrapolates QBMM bubble pressure and mass-vapor variables into ghost cells by copying boundary values.
     subroutine s_qbmm_extrapolation(bc_dir, bc_loc, k, l, pb_in, mv_in)
         $:GPU_ROUTINE(parallelism='[seq]')
         real(stp), optional, dimension(idwbuff(1)%beg:, idwbuff(2)%beg:, idwbuff(3)%beg:, 1:, 1:), intent(inout) :: pb_in, mv_in
@@ -1340,6 +1346,7 @@ contains
 
     end subroutine s_qbmm_extrapolation
 
+    !> @brief Populates ghost cell buffers for the color function and its divergence used in capillary surface tension.
     impure subroutine s_populate_capillary_buffers(c_divs, bc_type)
 
         type(scalar_field), dimension(num_dims + 1), intent(inout) :: c_divs
@@ -1475,6 +1482,7 @@ contains
         #:endif
     end subroutine s_populate_capillary_buffers
 
+    !> @brief Applies periodic boundary conditions to the color function and its divergence fields.
     subroutine s_color_function_periodic(c_divs, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_color_function_periodic', &
             & parallelism='[seq]', cray_inline=True)
@@ -1530,6 +1538,7 @@ contains
 
     end subroutine s_color_function_periodic
 
+    !> @brief Applies reflective boundary conditions to the color function and its divergence fields.
     subroutine s_color_function_reflective(c_divs, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_color_function_reflective', &
             & parallelism='[seq]', cray_inline=True)
@@ -1609,6 +1618,7 @@ contains
 
     end subroutine s_color_function_reflective
 
+    !> @brief Extrapolates the color function and its divergence into ghost cells by copying boundary values.
     subroutine s_color_function_ghost_cell_extrapolation(c_divs, bc_dir, bc_loc, k, l)
         $:GPU_ROUTINE(function_name='s_color_function_ghost_cell_extrapolation', &
             & parallelism='[seq]', cray_inline=True)
@@ -1664,6 +1674,7 @@ contains
 
     end subroutine s_color_function_ghost_cell_extrapolation
 
+    !> @brief Populates ghost cell buffers for the Jacobian scalar field used in the IGR elliptic solver.
     impure subroutine s_populate_F_igr_buffers(bc_type, jac_sf)
 
         type(integer_field), dimension(1:num_dims, 1:2), intent(in) :: bc_type
@@ -1835,6 +1846,7 @@ contains
         #:endif
     end subroutine s_populate_F_igr_buffers
 
+    !> @brief Creates MPI derived datatypes for boundary condition type arrays and buffer arrays used in parallel I/O.
     impure subroutine s_create_mpi_types(bc_type)
 
         type(integer_field), dimension(1:num_dims, 1:2), intent(in) :: bc_type
@@ -1868,6 +1880,7 @@ contains
 #endif
     end subroutine s_create_mpi_types
 
+    !> @brief Writes boundary condition type and buffer data to serial (unformatted) restart files.
     subroutine s_write_serial_boundary_condition_files(q_prim_vf, bc_type, step_dirpath, old_grid_in)
 
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
@@ -1909,6 +1922,7 @@ contains
 
     end subroutine s_write_serial_boundary_condition_files
 
+    !> @brief Writes boundary condition type and buffer data to per-rank parallel files using MPI I/O.
     subroutine s_write_parallel_boundary_condition_files(q_prim_vf, bc_type)
 
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
@@ -1975,6 +1989,7 @@ contains
 
     end subroutine s_write_parallel_boundary_condition_files
 
+    !> @brief Reads boundary condition type and buffer data from serial (unformatted) restart files.
     subroutine s_read_serial_boundary_condition_files(step_dirpath, bc_type)
 
         character(LEN=*), intent(in) :: step_dirpath
@@ -2021,6 +2036,7 @@ contains
 
     end subroutine s_read_serial_boundary_condition_files
 
+    !> @brief Reads boundary condition type and buffer data from per-rank parallel files using MPI I/O.
     subroutine s_read_parallel_boundary_condition_files(bc_type)
 
         type(integer_field), dimension(1:num_dims, 1:2), intent(inout) :: bc_type
@@ -2087,6 +2103,7 @@ contains
 
     end subroutine s_read_parallel_boundary_condition_files
 
+    !> @brief Packs primitive variable boundary slices into bc_buffers arrays for serialization.
     subroutine s_pack_boundary_condition_buffers(q_prim_vf)
 
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
@@ -2133,6 +2150,7 @@ contains
 
     end subroutine s_pack_boundary_condition_buffers
 
+    !> @brief Initializes the per-cell boundary condition type arrays with the global default BC values.
     subroutine s_assign_default_bc_type(bc_type)
 
         type(integer_field), dimension(1:num_dims, 1:2), intent(in) :: bc_type
@@ -2348,6 +2366,7 @@ contains
 
     end subroutine s_populate_grid_variables_buffers
 
+    !> @brief Deallocates boundary condition buffer arrays allocated during module initialization.
     subroutine s_finalize_boundary_common_module()
 
         if (bc_io) then

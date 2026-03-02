@@ -1,12 +1,10 @@
 !>
-!! @file m_global_parameters.f90
+!! @file
 !! @brief Contains module m_global_parameters
 
 #:include 'case.fpp'
 
-!> @brief This module contains all of the parameters characterizing the
-!!              computational domain, simulation algorithm, initial condition
-!!              and the stiffened equation of state.
+!> @brief Defines global parameters for the computational domain, simulation algorithm, and initial conditions
 module m_global_parameters
 
 #ifdef MFC_MPI
@@ -185,10 +183,6 @@ module m_global_parameters
 #ifdef MFC_MPI
 
     type(mpi_io_var), public :: MPI_IO_DATA
-    type(mpi_io_ib_var), public :: MPI_IO_IB_DATA
-    type(mpi_io_airfoil_ib_var), public :: MPI_IO_airfoil_IB_DATA
-    type(mpi_io_levelset_var), public :: MPI_IO_levelset_DATA
-    type(mpi_io_levelset_norm_var), public :: MPI_IO_levelsetnorm_DATA
 
     character(LEN=name_len) :: mpiiofs
     integer :: mpi_info_int !<
@@ -302,8 +296,6 @@ module m_global_parameters
     !! to the next time-step.
 
     logical :: fft_wrt
-    logical :: periodic_ibs
-    logical :: store_levelset
     logical :: slab_domain_decomposition
     logical :: dummy  !< AMDFlang workaround: keep a dummy logical to avoid a compiler case-optimization bug when a parameter+GPU-kernel conditional is false
 
@@ -605,8 +597,6 @@ contains
 
         Bx0 = dflt_real
 
-        periodic_ibs = .false.
-        store_levelset = .true.
         slab_domain_decomposition = .false.
 
         ! Subgrid bubble parameters
@@ -956,14 +946,6 @@ contains
                 MPI_IO_DATA%var(i)%sf => null()
             end do
         end if
-
-        if (ib) then
-            allocate (MPI_IO_IB_DATA%var%sf(0:m, 0:n, 0:p))
-            if (store_levelset) then
-                allocate (MPI_IO_levelset_DATA%var%sf(0:m, 0:n, 0:p, 1:num_ibs))
-                allocate (MPI_IO_levelsetnorm_DATA%var%sf(0:m, 0:n, 0:p, 1:num_ibs, 1:3))
-            end if
-        end if
 #endif
 
         ! Allocating grid variables for the x-direction
@@ -990,6 +972,7 @@ contains
 
     end subroutine s_initialize_global_parameters_module
 
+    !> @brief Configures MPI parallel I/O settings and allocates processor coordinate arrays.
     impure subroutine s_initialize_parallel_io
 
 #ifdef MFC_MPI
@@ -1027,6 +1010,7 @@ contains
 
     end subroutine s_initialize_parallel_io
 
+    !> @brief Deallocates all global grid, index, and equation-of-state parameter arrays.
     impure subroutine s_finalize_global_parameters_module
 
         integer :: i

@@ -157,12 +157,10 @@ case_dict = {
     "forcing_dt": 1.0/(0.5*dt),
     "particle_vf": 0.1,
 
-    "periodic_ibs": "T",
     "volume_filtering_momentum_eqn": "T",
     "filter_width": 3.0*D/2 * np.sqrt(2/(9*np.pi)),
     "compute_particle_drag": "T",
 
-    "store_levelset": "F",
     "slab_domain_decomposition": "T", 
     }
 

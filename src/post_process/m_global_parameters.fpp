@@ -1,12 +1,10 @@
 !>
-!! @file m_global_parameters.f90
+!! @file
 !! @brief Contains module m_global_parameters
 
 #:include 'case.fpp'
 
-!> @brief This module contains all of the parameters characterizing the
-!!      computational domain, simulation algorithm, stiffened equation of
-!!      state and finally, the formatted database file(s) structure.
+!> @brief Global parameters for the post-process: domain geometry, equation of state, and output database settings
 module m_global_parameters
 
 #ifdef MFC_MPI
@@ -336,7 +334,7 @@ module m_global_parameters
 
     real(wp) :: sigma
     logical :: surface_tension
-    !> #}
+    !> @}
 
     !> @name Index variables used for m_variables_conversion
     !> @{
@@ -358,8 +356,6 @@ module m_global_parameters
     real(wp) :: Bx0 !< Constant magnetic field in the x-direction (1D)
 
     real(wp) :: wall_time, wall_time_avg !< Wall time measurements
-    logical :: periodic_ibs !< Periodic immersed boundaries
-    logical :: store_levelset !< Store immersed boundary levelset info
     logical :: slab_domain_decomposition !< MPI domain decomposition into slabs
     logical :: q_filtered_wrt !< write FFT filtered quantities
 
@@ -559,8 +555,6 @@ contains
         ! MHD
         Bx0 = dflt_real
 
-        periodic_ibs = .false.
-        store_levelset = .true.
         slab_domain_decomposition = .false.
         q_filtered_wrt = .false.
 
