@@ -2,54 +2,55 @@ import json
 import math
 import numpy as np
 
+
 gam_a = 1.4
 
-# sphere diameter
 D = 0.1
-# domain length
 L = 10 * D
 
-# mach number
 M = 0.8
-# reynolds number
-Re = 1000.0
+Re = 1500.0
 
-# pressure
-P = 101325
-# density
+P = 101325.0
 rho = 1.225
 
-# fluid x velocity
-v1 = M * np.sqrt(gam_a * P / rho)
-# dynamic viscosity
+v1 = M * np.sqrt(gam_a * P / rho) 
 mu = rho * v1 * D / Re
 
-dt = 1.0e-06
-Nt = int(2 * L / v1 / dt)  # roughly 2 flows through domain
-t_save = Nt // 5
-t_step_start_stats = Nt // 2
+#print('mu: ', mu)
+#print('v1: ', v1)
+#print('rho: ', rho)
+#print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-Nx = 127  # to accurately resolve = 399
-Ny = Nx
-Nz = Ny
+dt = 0.8E-06
+Nt = int(L * 4 / v1 / dt)
+t_save = int(Nt/5)
+t_step_start_stats = int(Nt/2)
+
+#print(Nt, t_step_start_stats)
+
+Nx = 399
+Ny = 399
+Nz = 399
 
 # load initial sphere locations
-sphere_loc = np.loadtxt("sphere_array_locations.txt")
+sphere_loc = np.loadtxt('sphere_array_locations.txt')
 N_sphere = len(sphere_loc)
+
+particle_vf = N_sphere * (4.0/3.0*np.pi*(D/2.0)**3) / (L**3)
+fluid_vf = 1.0 - particle_vf
 
 # immersed boundary dictionary
 ib_dict = {}
 for i in range(N_sphere):
-    ib_dict.update(
-        {
-            f"patch_ib({i+1})%geometry": 8,
-            f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
-            f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
-            f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
-            f"patch_ib({i+1})%radius": D / 2,
-            f"patch_ib({i+1})%slip": "F",
-        }
-    )
+    ib_dict.update({
+        f"patch_ib({i+1})%geometry": 8,
+        f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
+        f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
+        f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
+        f"patch_ib({i+1})%radius": D / 2,
+        f"patch_ib({i+1})%slip": "F",
+        })
 
 # Configuring case dictionary
 case_dict = {
@@ -57,25 +58,25 @@ case_dict = {
     "run_time_info": "T",
     # Computational Domain Parameters
     # x direction
-    "x_domain%beg": -5.0 * D,
-    "x_domain%end": 5.0 * D,
+    "x_domain%beg": -L/2,
+    "x_domain%end": L/2,
     # y direction
-    "y_domain%beg": -5.0 * D,
-    "y_domain%end": 5.0 * D,
+    "y_domain%beg": -L/2,
+    "y_domain%end": L/2,
     # z direction
-    "z_domain%beg": -5.0 * D,
-    "z_domain%end": 5.0 * D,
+    "z_domain%beg": -L/2,
+    "z_domain%end": L/2,
     "cyl_coord": "F",
     "m": Nx,
     "n": Ny,
     "p": Nz,
     "dt": dt,
     "t_step_start": 0,
-    "t_step_stop": Nt,
-    "t_step_save": t_save,
+    "t_step_stop": Nt,  # 3000
+    "t_step_save": t_save,  # 10
     "t_step_start_stats": t_step_start_stats,
     # Simulation Algorithm Parameters
-    # Only one patch is necessary for one fluid
+    # Only one patches are necessary, the air tube
     "num_patches": 1,
     # Use the 5 equation model
     "model_eqns": 2,
@@ -100,6 +101,7 @@ case_dict = {
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
+    "low_Mach": 1,
     "wave_speeds": 1,
     # periodic bc
     "bc_x%beg": -1,
@@ -108,7 +110,7 @@ case_dict = {
     "bc_y%end": -1,
     "bc_z%beg": -1,
     "bc_z%end": -1,
-    # Set IB to True and add 1 patch for every sphere
+    # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_sphere,
     "viscous": "T",
@@ -117,13 +119,13 @@ case_dict = {
     "precision": 2,
     "prim_vars_wrt": "T",
     "E_wrt": "T",
-    "q_filtered_wrt": "T",  # write filtered data statistics
+    "q_filtered_wrt": "T",
     "parallel_io": "T",
-    # Patch: cube filled with air
+    # Patch: Constant Tube filled with air
     # Specify the cylindrical air tube grid geometry
     "patch_icpp(1)%geometry": 9,
-    # Uniform properties, centroid is at the center of the domain
     "patch_icpp(1)%x_centroid": 0.0,
+    # Uniform medium density, centroid is at the center of the domain
     "patch_icpp(1)%y_centroid": 0.0,
     "patch_icpp(1)%z_centroid": 0.0,
     "patch_icpp(1)%length_x": 10 * D,
@@ -136,11 +138,13 @@ case_dict = {
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
     "patch_icpp(1)%alpha(1)": 1.0e00,
+    # Patch: Sphere Immersed Boundary
     # Fluids Physical Parameters
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
-    # force flow to desired bulk quantities
+
+    # new case additions
     "periodic_forcing": "T",
     "u_inf_ref": v1,
     "rho_inf_ref": rho,
@@ -148,7 +152,7 @@ case_dict = {
     "mom_f_idx": 1,
     "forcing_window": 1,
     "forcing_dt": 1.0 / (0.5 * dt),
-    "fluid_volume_fraction": 1.0 - 0.1,  # 1 - particle volume fraction
+    "fluid_volume_fraction": fluid_vf,  # 1 - particle volume fraction
     # ibs wrap around domain
     "periodic_ibs": "T",
     # compute unclosed terms in volume filtered momentum equation
@@ -159,7 +163,7 @@ case_dict = {
     "store_levelset": "F",
     # MPI domain decomposition into slabs instead of blocks
     "slab_domain_decomposition": "T",
-}
+    }
 
 case_dict.update(ib_dict)
 

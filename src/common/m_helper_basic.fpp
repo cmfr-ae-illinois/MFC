@@ -144,9 +144,9 @@ contains
             buff_size = max(buff_size, 6)
         end if
 
-        if (ib) then
-            buff_size = max(buff_size, 10)
-        end if
+        ! if (ib) then
+        !     buff_size = max(buff_size, 10)
+        ! end if
 
         ! Configuring Coordinate Direction Indexes
         idwint(1)%beg = 0; idwint(2)%beg = 0; idwint(3)%beg = 0
