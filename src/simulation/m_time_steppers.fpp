@@ -519,7 +519,7 @@ contains
 
     impure subroutine s_tvd_rk(t_step, time_avg, nstage)
 #ifdef _CRAYFTN
-        !DIR$ OPTIMIZE (-haggress)
+    !DIR$ OPTIMIZE (-haggress)
 #endif
         integer, intent(in) :: t_step
         real(wp), intent(inout) :: time_avg
