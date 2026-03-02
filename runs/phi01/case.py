@@ -47,11 +47,12 @@ for i in range(N_sphere):
         f"patch_ib({i+1})%slip": "F",
         })
 
+# N_sphere = 1
 # ib_dict.update({
 #     f"patch_ib({1})%geometry": 8,
-#     f"patch_ib({1})%x_centroid": sphere_loc[20, 0],
-#     f"patch_ib({1})%y_centroid": sphere_loc[20, 1],
-#     f"patch_ib({1})%z_centroid": sphere_loc[20, 2],
+#     f"patch_ib({1})%x_centroid": 0.0,#sphere_loc[20, 0],
+#     f"patch_ib({1})%y_centroid": 0.0,#sphere_loc[20, 1],
+#     f"patch_ib({1})%z_centroid": 0.0,#sphere_loc[20, 2],
 #     f"patch_ib({1})%radius": D / 2,
 #     f"patch_ib({1})%slip": "F",
 #     })
@@ -78,7 +79,7 @@ case_dict = {
     "t_step_start": 0,
     "t_step_stop": Nt,  
     "t_step_save": t_save,  
-    "t_step_stat_start": t_step_start_stats,
+    "t_step_start_stats": t_step_start_stats,
     # Simulation Algorithm Parameters
     # Only one patches are necessary, the air tube
     "num_patches": 1,
@@ -155,9 +156,9 @@ case_dict = {
     "mom_f_idx": 1,
     "forcing_window": 1,
     "forcing_dt": 1.0/(0.5*dt),
-    "particle_vf": 0.1,
+    "fluid_volume_fraction": 0.9,
 
-    "volume_filtering_momentum_eqn": "T",
+    "volume_filter_momentum_eqn": "T",
     "filter_width": 3.0*D/2 * np.sqrt(2/(9*np.pi)),
     "compute_particle_drag": "T",
 

@@ -508,9 +508,9 @@ contains
                             print *, "x: ", x_cc(-buff_size), " to: ", x_cc(m + buff_size - 1)
                             print *, "y: ", y_cc(-buff_size), " to: ", y_cc(n + buff_size - 1)
                             if (p /= 0) print *, "z: ", z_cc(-buff_size), " to: ", z_cc(p + buff_size - 1)
-                            print *, "Image point is located approximately ", (ghost_points_in(q)%loc(dim) - ghost_points_in(q)%ip_loc(dim))/(s_cc(1) - s_cc(0)), " grid cells away"
+                            print *, "Image point is located approximately ", (s_cc(ghost_points_in(q)%loc(dim)) - ghost_points_in(q)%ip_loc(dim))/(s_cc(1) - s_cc(0)), " grid cells away"
                             print *, "Levelset ", dist, " and Norm: ", norm(:)
-                            print *, "A short term fix may include increasing buff_size further in m_helper_basic (currently set to a minimum of 10)"
+                            print *, "A short term fix may include increasing buff_size further in m_helper_basic (currently set to a minimum of 10)", buff_size
 #endif
                             bounds_error = .true.
                         end if
