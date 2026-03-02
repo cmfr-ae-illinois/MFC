@@ -22,13 +22,17 @@ module m_additional_forcing
     real(wp), allocatable, dimension(:) :: rho_window, u_window, eps_window
     real(wp) :: sum_rho, sum_u, sum_eps
     real(wp) :: phase_rho, phase_u, phase_eps
-    integer :: window_loc, window_fill
+    integer :: window_fill
 
     $:GPU_DECLARE(create='[q_periodic_force, avg_coeff]')
     $:GPU_DECLARE(create='[spatial_rho, spatial_u, spatial_eps, phase_rho, phase_u, phase_eps]')
 
     ! control params
+    real(wp), allocatable, dimension(:) :: u_series
     real(wp) :: integral_u, integral_M
+    real(wp), allocatable, dimension(:) :: rho_wdw_cntrl, u_wdw_cntrl, cs_wdw_cntrl, Vp_wdw_cntrl
+    real(wp) :: rho_sum_cntrl, u_sum_cntrl, cs_sum_cntrl, Vp_sum_cntrl
+    integer :: wdw_fill_cntrl
 
 contains
 
@@ -57,7 +61,6 @@ contains
         $:GPU_UPDATE(device='[avg_coeff]')
 
         ! initialization of parameters
-        window_loc = 0
         window_fill = 0
 
         @:ALLOCATE(rho_window(forcing_window))
@@ -81,9 +84,26 @@ contains
         end if
 
         ! controls
-        ! initialize integrals
         integral_u = 0._wp
         integral_M = 0._wp
+        @:ALLOCATE(u_series(3))
+        u_series = 0._wp
+
+        @:ALLOCATE(rho_wdw_cntrl(cntrl_p%window_size))
+        @:ALLOCATE(u_wdw_cntrl(cntrl_p%window_size))
+        @:ALLOCATE(cs_wdw_cntrl(cntrl_p%window_size))
+        @:ALLOCATE(Vp_wdw_cntrl(cntrl_p%window_size))
+        rho_wdw_cntrl = 0._wp
+        u_wdw_cntrl = 0._wp
+        cs_wdw_cntrl = 0._wp
+        Vp_wdw_cntrl = 0._wp
+
+        rho_sum_cntrl = 0._wp
+        u_sum_cntrl = 0._wp
+        cs_sum_cntrl = 0._wp
+        Vp_sum_cntrl = 0._wp
+
+        wdw_fill_cntrl = 0
 
         if (forcing_wrt .and. proc_rank == 0) then
             open (unit=103, file='controls.bin', status='replace', form='unformatted', access='stream', action='write')
@@ -98,6 +118,7 @@ contains
         integer, intent(in) :: t_step
         real(wp) :: spatial_rho_glb, spatial_u_glb, spatial_eps_glb
         real(wp) :: dVol, rho
+        integer :: window_loc
         integer :: i, j, k, l
 
         ! zero spatial averages
@@ -212,31 +233,25 @@ contains
 
     end subroutine s_compute_periodic_forcing
 
-    subroutine s_update_controllers(q_cons_vf)
+    subroutine s_update_controllers(t_step, q_cons_vf)
+        integer, intent(in) :: t_step
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
         real(wp) :: Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc, rho, dVol, rho_avg, rhou_avg, u_avg, cs_avg, pres
-        real(wp) :: Re_star, M_star, mu, Dp, u_star_rel, gamma, Mach, u_rel
-        real(wp) :: err_u, err_M
-        real(wp) :: tau_p, K_Pg, K_Ig, K_Pp, K_Ip
+        real(wp) :: mu, Dp, u_star_rel, gamma, Mach, u_rel
+        real(wp) :: err_u, err_M, deriv_u
+        integer :: window_loc
         integer :: i, j, k, l
 
         ! these need to be moved to case file/setup
-        Re_star = 1500._wp
-        M_star = 1.2_wp
         mu = 1._wp/fluid_pp(1)%Re(1)
         Dp = 2._wp*patch_ib(1)%radius
         gamma = 1._wp/fluid_pp(1)%gamma + 1._wp
-
-        tau_p = 0.002759532353827804             !2._wp/9._wp*(patch_ib(1)%mass/(4._wp/3._wp*pi*patch_ib(1)%radius**3))*patch_ib(1)%radius**2/mu
-        K_Pg = -1._wp/(10._wp*tau_p)
-        K_Ig = 0._wp                             !-1._wp/(8._wp*tau_p**2)
-        K_Pp = -2._wp*101325/(100._wp*M_star)
-        K_Ip = 0._wp                             !-2._wp*101325/(75._wp*M_star*tau_p)
 
         ! intialize
         Vp_avg = 0._wp
         rho_avg_loc = 0._wp
         rhou_avg_loc = 0._wp
+        cs_avg_loc = 0._wp
 
         ! get average particle velocity
         do i = 1, num_ibs
@@ -276,19 +291,50 @@ contains
         rhou_avg = rhou_avg*avg_coeff
         cs_avg = cs_avg*avg_coeff
         u_avg = rhou_avg/rho_avg
+
+        ! time average over window
+        window_loc = 1 + mod(t_step, cntrl_p%window_size)
+
+        rho_sum_cntrl = rho_sum_cntrl - rho_wdw_cntrl(window_loc) + rho_avg
+        u_sum_cntrl = u_sum_cntrl - u_wdw_cntrl(window_loc) + u_avg
+        cs_sum_cntrl = cs_sum_cntrl - cs_wdw_cntrl(window_loc) + cs_avg
+        Vp_sum_cntrl = Vp_sum_cntrl - Vp_wdw_cntrl(window_loc) + Vp_avg
+
+        rho_wdw_cntrl(window_loc) = rho_avg
+        u_wdw_cntrl(window_loc) = u_avg
+        cs_wdw_cntrl(window_loc) = cs_avg
+        Vp_wdw_cntrl(window_loc) = Vp_avg
+
+        if (wdw_fill_cntrl < cntrl_p%window_size) wdw_fill_cntrl = wdw_fill_cntrl + 1
+
+        rho_avg = rho_sum_cntrl / real(wdw_fill_cntrl, wp)
+        u_avg = u_sum_cntrl / real(wdw_fill_cntrl, wp)
+        cs_avg = cs_sum_cntrl / real(wdw_fill_cntrl, wp)
+        Vp_avg = Vp_sum_cntrl / real(wdw_fill_cntrl, wp)
+        ! done time averaging
+
         u_rel = u_avg - Vp_avg
 
-        u_star_rel = Re_star*mu/(rho_avg*Dp)
+        u_star_rel = cntrl_p%Re_tgt*mu/(rho_avg*Dp)
         Mach = u_rel/cs_avg
 
         err_u = u_star_rel - u_rel
-        err_M = M_star - Mach
+        err_M = cntrl_p%M_tgt - Mach
 
         integral_u = integral_u + (dt*err_u)
         integral_M = integral_M + (dt*err_M)
 
-        g_y = g_y + K_Pg*err_u + K_Ig*integral_u
-        P_inf_ref = P_inf_ref + K_Pp*err_M + K_Ip*integral_M
+        u_series(1) = u_series(2)
+        u_series(2) = u_series(3)
+        u_series(3) = u_rel
+        if (t_step > 2) then
+            deriv_u = (1.5_wp * u_series(3) - 2._wp * u_series(2) + 0.5_wp * u_series(1)) / dt
+        else 
+            deriv_u = 0._wp
+        end if
+
+        g_y = g_y + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*deriv_u
+        P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M 
 
         if (forcing_wrt .and. proc_rank == 0) then
             print *, 'CONTROL:', g_y, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach

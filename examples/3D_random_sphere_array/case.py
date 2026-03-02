@@ -25,7 +25,7 @@ v1 = M * np.sqrt(gam_a * P / rho)
 mu = rho * v1 * D / Re
 
 dt = 1.0e-06
-Nt = int(2 * L / v1 / dt)  # roughly 2 flows through domain
+Nt = 20  # int(2 * L / v1 / dt)  # roughly 2 flows through domain
 t_save = Nt // 5
 t_step_start_stats = Nt // 2
 

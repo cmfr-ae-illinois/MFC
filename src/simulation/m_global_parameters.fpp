@@ -581,6 +581,8 @@ module m_global_parameters
     $:GPU_DECLARE(create='[hyper_cleaning_speed, hyper_cleaning_tau]')
     !> @}
 
+    type(control_params) :: cntrl_p
+
 contains
 
     !> Assigns default values to the user inputs before reading
@@ -897,6 +899,14 @@ contains
         t_step_start_stats = dflt_int
         filter_width = dflt_real
         q_filtered_wrt = .false.
+
+        cntrl_p%Re_tgt = dflt_real
+        cntrl_p%M_tgt = dflt_real
+        cntrl_p%tau_p = dflt_real
+        cntrl_p%K_Pg = dflt_real
+        cntrl_p%K_Dg = dflt_real
+        cntrl_p%K_Pp = dflt_real
+        cntrl_p%window_size = dflt_int
 
     end subroutine s_assign_default_values_to_user_inputs
 

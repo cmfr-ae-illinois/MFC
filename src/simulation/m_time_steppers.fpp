@@ -654,7 +654,7 @@ contains
         end do
 
         ! update body force and pressure_infty
-        call s_update_controllers(q_cons_ts(1)%vf)
+        call s_update_controllers(t_step, q_cons_ts(1)%vf)
 
         ! Adaptive dt: final stage
         if (adap_dt) call s_adaptive_dt_bubble(3)

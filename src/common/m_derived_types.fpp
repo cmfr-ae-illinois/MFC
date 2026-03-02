@@ -506,4 +506,14 @@ module m_derived_types
         integer :: stat_pres_idx       !< filtered pressure
     end type volume_filter_params
 
+    type control_params
+        real(wp) :: Re_tgt
+        real(wp) :: M_tgt
+        real(wp) :: tau_p
+        real(wp) :: K_Pg
+        real(wp) :: K_Dg
+        real(wp) :: K_Pp  
+        integer  :: window_size
+    end type control_params
+
 end module m_derived_types

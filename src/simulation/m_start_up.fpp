@@ -197,7 +197,7 @@ contains
             periodic_forcing, mom_f_idx, forcing_window, forcing_dt, forcing_wrt, &
             fluid_volume_fraction, volume_filter_momentum_eqn, store_levelset, &
             slab_domain_decomposition, t_step_start_stats, &
-            filter_width, q_filtered_wrt
+            filter_width, q_filtered_wrt, cntrl_p
 
         ! Checking that an input file has been provided by the user. If it
         ! has, then the input file is read in, otherwise, simulation exits.

@@ -685,6 +685,9 @@ def _load():  # pylint: disable=too-many-locals,too-many-statements
     for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt",
               "fluid_volume_fraction", "filter_width"]:
         _r(n, REAL)
+    for n in ["Re_tgt", "M_tgt", "tau_p", "K_Pg", "K_Dg", "K_Pp"]:
+        _r(f"cntrl_p%{n}", REAL)
+    _r("cntrl_p%window_size", INT)
 
     # ==========================================================================
     # INDEXED PARAMETERS
