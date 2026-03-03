@@ -1,16 +1,11 @@
 !>
-!! @file m_time_steppers.f90
+!! @file
 !! @brief Contains module m_time_steppers
 
 #:include 'macros.fpp'
 #:include 'case.fpp'
 
-!> @brief The following module features a variety of time-stepping schemes.
-!!              Currently, it includes the following Runge-Kutta (RK) algorithms:
-!!                   1) 1st Order TVD RK
-!!                   2) 2nd Order TVD RK
-!!                   3) 3rd Order TVD RK
-!!              where TVD designates a total-variation-diminishing time-stepper.
+!> @brief Total-variation-diminishing (TVD) Runge--Kutta time integrators (1st-, 2nd-, and 3rd-order SSP)
 module m_time_steppers
 
     use m_derived_types        !< Definitions of the derived types
@@ -88,6 +83,7 @@ module m_time_steppers
 
     $:GPU_DECLARE(create='[q_cons_ts,q_prim_vf,q_T_sf,rhs_vf,q_prim_ts1,q_prim_ts2,rhs_mv,rhs_pb,max_dt,rk_coef,stor,bc_type]')
 
+!> @cond
 #if defined(__NVCOMPILER_GPU_UNIFIED_MEM)
     real(stp), allocatable, dimension(:, :, :, :), pinned, target :: q_cons_ts_pool_host
 #elif defined(FRONTIER_UNIFIED)
@@ -96,6 +92,7 @@ module m_time_steppers
     integer(kind=8) :: pool_size
     type(c_ptr) :: cptr_host, cptr_device
 #endif
+!> @endcond
 
 contains
 
@@ -133,6 +130,7 @@ contains
             @:PREFER_GPU(q_cons_ts(i)%vf)
         end do
 
+!> @cond
 #if defined(__NVCOMPILER_GPU_UNIFIED_MEM)
         if (num_ts == 2 .and. nv_uvm_out_of_core) then
             ! host allocation for q_cons_ts(2)%vf(j)%sf for all j
@@ -222,6 +220,7 @@ contains
             end do
         end do
 #else
+!> @endcond
         do i = 1, num_ts
             do j = 1, sys_size
                 @:ALLOCATE(q_cons_ts(i)%vf(j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
@@ -230,7 +229,9 @@ contains
             end do
             @:ACC_SETUP_VFs(q_cons_ts(i))
         end do
+!> @cond
 #endif
+!> @endcond
 
         ! Allocating the cell-average primitive ts variables
         if (probe_wrt) then
@@ -519,6 +520,7 @@ contains
 
     end subroutine s_initialize_time_steppers_module
 
+    !> @brief Advances the solution one full step using a TVD Runge-Kutta time integrator.
     impure subroutine s_tvd_rk(t_step, time_avg, nstage)
 #ifdef _CRAYFTN
         !DIR$ OPTIMIZE (-haggress)
@@ -634,15 +636,6 @@ contains
                     call s_propagate_immersed_boundaries(s)
                 end if
 
-                if (moving_immersed_boundary_flag .and. periodic_ibs .and. s == nstage) then
-                    do i = 1, num_ibs
-                        patch_ib(i)%x_centroid = domain_glb(1, 1) + modulo(patch_ib(i)%x_centroid - domain_glb(1, 1), domain_glb(1, 2) - domain_glb(1, 1))
-                        patch_ib(i)%y_centroid = domain_glb(2, 1) + modulo(patch_ib(i)%y_centroid - domain_glb(2, 1), domain_glb(2, 2) - domain_glb(2, 1))
-                        patch_ib(i)%z_centroid = domain_glb(3, 1) + modulo(patch_ib(i)%z_centroid - domain_glb(3, 1), domain_glb(3, 2) - domain_glb(3, 1))
-                    end do
-                    call s_update_mib(num_ibs, levelset, levelset_norm)
-                end if
-
                 ! update the ghost fluid properties point values based on IB state
                 if (qbmm .and. .not. polytropic) then
                     call s_ibm_correct_state(q_cons_ts(1)%vf, q_prim_vf, pb_ts(1)%sf, mv_ts(1)%sf)
@@ -655,6 +648,8 @@ contains
 
         ! update body force and pressure_infty
         call s_update_controllers(t_step, q_cons_ts(1)%vf)
+
+        if (moving_immersed_boundary_flag) call s_wrap_periodic_ibs()
 
         ! Adaptive dt: final stage
         if (adap_dt) call s_adaptive_dt_bubble(3)
@@ -673,7 +668,7 @@ contains
     end subroutine s_tvd_rk
 
     !> Bubble source part in Strang operator splitting scheme
-        !! @param t_step Current time-step
+        !! @param stage Current time-stage
     impure subroutine s_adaptive_dt_bubble(stage)
 
         integer, intent(in) :: stage
@@ -710,6 +705,7 @@ contains
 
     end subroutine s_adaptive_dt_bubble
 
+    !> @brief Computes the global time step size from CFL stability constraints across all cells.
     impure subroutine s_compute_dt()
 
         real(wp) :: rho        !< Cell-avg. density
@@ -776,6 +772,9 @@ contains
 
     !> This subroutine applies the body forces source term at each
         !! Runge-Kutta stage
+        !! @param q_cons_vf Conservative variables
+        !! @param q_prim_vf_in Primitive variables
+        !! @param rhs_vf_in Right-hand side variables
     subroutine s_apply_bodyforces(q_cons_vf, q_prim_vf_in, rhs_vf_in, ldt)
 
         type(scalar_field), dimension(1:sys_size), intent(inout) :: q_cons_vf
@@ -806,11 +805,14 @@ contains
 
     end subroutine s_apply_bodyforces
 
+    !> @brief Updates immersed boundary positions and velocities at the current Runge-Kutta stage.
     subroutine s_propagate_immersed_boundaries(s)
 
         integer, intent(in) :: s
         integer :: i
         logical :: forces_computed
+
+        call nvtxStartRange("PROPAGATE-IMMERSED-BOUNDARIES")
 
         forces_computed = .false.
 
@@ -857,7 +859,9 @@ contains
             end if
         end do
 
-        call s_update_mib(num_ibs, levelset, levelset_norm)
+        call s_update_mib(num_ibs)
+
+        call nvtxEndRange
 
     end subroutine s_propagate_immersed_boundaries
 

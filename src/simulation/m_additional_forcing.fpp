@@ -16,7 +16,6 @@ module m_additional_forcing
  s_update_controllers
 
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
-    real(wp) :: volfrac_phi
     real(wp) :: avg_coeff
     real(wp) :: spatial_rho, spatial_u, spatial_eps
     real(wp), allocatable, dimension(:) :: rho_window, u_window, eps_window
@@ -46,18 +45,11 @@ contains
             @:ACC_SETUP_SFs(q_periodic_force(i))
         end do
 
-        ! particle volume fraction
-        if (ib) then
-            volfrac_phi = 1._wp - fluid_volume_fraction
-        else
-            volfrac_phi = 0._wp
-        end if
-
         ! total cartesian domain volume
         domain_vol = (domain_glb(1, 2) - domain_glb(1, 1))*(domain_glb(2, 2) - domain_glb(2, 1))*(domain_glb(3, 2) - domain_glb(3, 1))
 
         ! coefficient used for phase averages
-        avg_coeff = 1._wp/(domain_vol*(1._wp - volfrac_phi))
+        avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
         $:GPU_UPDATE(device='[avg_coeff]')
 
         ! initialization of parameters
