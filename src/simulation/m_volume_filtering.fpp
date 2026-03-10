@@ -89,9 +89,9 @@ module m_volume_filtering
     complex(c_double_complex), allocatable :: data_cmplx_out1dy(:)
 
     ! 3D arrays for slab transposes
-    complex(c_float_complex), allocatable :: data_cmplx_slabz(:, :, :), data_cmplx_slaby(:, :, :)
+    complex(c_double_complex), allocatable :: data_cmplx_slabz(:, :, :), data_cmplx_slaby(:, :, :)
     ! 3D arrays for slab transposes of tensor quantities
-    complex(c_float_complex), allocatable :: data_cmplx_slabz_batch(:, :, :, :), data_cmplx_slaby_batch(:, :, :, :)
+    complex(c_double_complex), allocatable :: data_cmplx_slabz_batch(:, :, :, :), data_cmplx_slaby_batch(:, :, :, :)
 
     ! input/output array for FFT routine
     real(c_double), allocatable :: data_real_3D_slabz(:, :, :)
@@ -107,8 +107,8 @@ module m_volume_filtering
     $:GPU_DECLARE(create='[data_real_3D_slabz, real_kernelG_in, cmplx_kernelG1d]')
 
     ! buffers for data transpose
-    complex(c_float_complex), allocatable :: sendbuf_sf(:), recvbuf_sf(:)
-    complex(c_float_complex), allocatable :: sendbuf_batch(:), recvbuf_batch(:)
+    complex(c_double_complex), allocatable :: sendbuf_sf(:), recvbuf_sf(:)
+    complex(c_double_complex), allocatable :: sendbuf_batch(:), recvbuf_batch(:)
 
     $:GPU_DECLARE(create='[sendbuf_sf, recvbuf_sf, sendbuf_batch, recvbuf_batch]')
 
@@ -892,8 +892,8 @@ contains
 
         $:GPU_UPDATE(host='[sendbuf_sf]')
 #ifdef MFC_MPI
-        call MPI_Alltoall(sendbuf_sf, NxC*Nyloc*Nzloc, MPI_COMPLEX, &
-                          recvbuf_sf, NxC*Nyloc*Nzloc, MPI_COMPLEX, MPI_COMM_WORLD, ierr)
+        call MPI_Alltoall(sendbuf_sf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, &
+                          recvbuf_sf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 #endif
         $:GPU_UPDATE(device='[recvbuf_sf]')
 
@@ -930,8 +930,8 @@ contains
 
         $:GPU_UPDATE(host='[sendbuf_sf]')
 #ifdef MFC_MPI
-        call MPI_Alltoall(sendbuf_sf, NxC*Nyloc*Nzloc, MPI_COMPLEX, &
-                          recvbuf_sf, NxC*Nyloc*Nzloc, MPI_COMPLEX, MPI_COMM_WORLD, ierr)
+        call MPI_Alltoall(sendbuf_sf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, &
+                          recvbuf_sf, NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 #endif
         $:GPU_UPDATE(device='[recvbuf_sf]')
 
@@ -970,8 +970,8 @@ contains
 
         $:GPU_UPDATE(host='[sendbuf_batch]')
 #ifdef MFC_MPI
-        call MPI_Alltoall(sendbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_COMPLEX, &
-                          recvbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_COMPLEX, MPI_COMM_WORLD, ierr)
+        call MPI_Alltoall(sendbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, &
+                          recvbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 #endif
         $:GPU_UPDATE(device='[recvbuf_batch]')
 
@@ -1012,8 +1012,8 @@ contains
 
         $:GPU_UPDATE(host='[sendbuf_batch]')
 #ifdef MFC_MPI
-        call MPI_Alltoall(sendbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_COMPLEX, &
-                          recvbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_COMPLEX, MPI_COMM_WORLD, ierr)
+        call MPI_Alltoall(sendbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, &
+                          recvbuf_batch, fft_batch_size*NxC*Nyloc*Nzloc, MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
 #endif
         $:GPU_UPDATE(device='[recvbuf_batch]')
 
