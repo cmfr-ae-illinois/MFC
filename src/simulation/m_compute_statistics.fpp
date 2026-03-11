@@ -62,7 +62,7 @@ contains
             @:ACC_SETUP_VFs(Msn_eff_visc(i))
         end do
 
-        @:ALLOCATE(Msn_int_mom_exch(1:num_dims))
+        @:ALLOCATE(Msn_int_mom_exch(num_dims))
         do i = 1, num_dims
             @:ALLOCATE(Msn_int_mom_exch(i)%vf(1:4))
         end do
@@ -73,7 +73,7 @@ contains
             @:ACC_SETUP_VFs(Msn_int_mom_exch(i))
         end do
 
-        @:ALLOCATE(Msn_q_cons_filtered(1:E_idx))
+        @:ALLOCATE(Msn_q_cons_filtered(E_idx))
         do i = 1, E_idx
             @:ALLOCATE(Msn_q_cons_filtered(i)%vf(1:4))
         end do
@@ -84,7 +84,7 @@ contains
             @:ACC_SETUP_VFs(Msn_q_cons_filtered(i))
         end do
 
-        @:ALLOCATE(Msn_filtered_pressure(1:4))
+        @:ALLOCATE(Msn_filtered_pressure(4))
         do i = 1, 4
             @:ALLOCATE(Msn_filtered_pressure(i)%sf(0:m, 0:n, 0:p))
             @:ACC_SETUP_SFs(Msn_filtered_pressure(i))
@@ -112,7 +112,7 @@ contains
             @:ACC_SETUP_VFs(stat_eff_visc(i))
         end do
 
-        @:ALLOCATE(stat_int_mom_exch(1:num_dims))
+        @:ALLOCATE(stat_int_mom_exch(num_dims))
         do i = 1, num_dims
             @:ALLOCATE(stat_int_mom_exch(i)%vf(1:4))
         end do
@@ -123,7 +123,7 @@ contains
             @:ACC_SETUP_VFs(stat_int_mom_exch(i))
         end do
 
-        @:ALLOCATE(stat_q_cons_filtered(1:E_idx))
+        @:ALLOCATE(stat_q_cons_filtered(E_idx))
         do i = 1, E_idx
             @:ALLOCATE(stat_q_cons_filtered(i)%vf(1:4))
         end do
@@ -134,7 +134,7 @@ contains
             @:ACC_SETUP_VFs(stat_q_cons_filtered(i))
         end do
 
-        @:ALLOCATE(stat_filtered_pressure(1:4))
+        @:ALLOCATE(stat_filtered_pressure(4))
         do i = 1, 4
             @:ALLOCATE(stat_filtered_pressure(i)%sf(0:m, 0:n, 0:p))
             @:ACC_SETUP_SFs(stat_filtered_pressure(i))
@@ -143,8 +143,8 @@ contains
     end subroutine s_initialize_statistics_module
 
     subroutine s_compute_statistics_momentum_unclosed_terms(t_step, t_step_start_stats, reynolds_stress, eff_visc, int_mom_exch, q_cons_filtered, filtered_pressure)
-        type(scalar_field), dimension(num_dims, num_dims), intent(in) :: reynolds_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(in) :: eff_visc
+        type(scalar_field), dimension(6), intent(in) :: reynolds_stress
+        type(scalar_field), dimension(6), intent(in) :: eff_visc
         type(scalar_field), dimension(num_dims), intent(in) :: int_mom_exch
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
         type(scalar_field), intent(in) :: filtered_pressure

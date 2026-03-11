@@ -247,7 +247,7 @@ contains
     impure subroutine s_allocate_filtered_arrays(local_start_idx, end_x, end_y, end_z)
 
         integer, intent(in) :: local_start_idx, end_x, end_y, end_z
-        integer :: i, j, k
+        integer :: i, j
 
         allocate (filtered_fluid_indicator_function%sf(local_start_idx:end_x, &
                                                        local_start_idx:end_y, &
@@ -274,8 +274,8 @@ contains
             allocate (stat_reynolds_stress(i)%vf(1:4))
         end do
         do i = 1, 6
-            do k = 1, 4
-                allocate (stat_reynolds_stress(i)%vf(k)%sf(local_start_idx:end_x, &
+            do j = 1, 4
+                allocate (stat_reynolds_stress(i)%vf(j)%sf(local_start_idx:end_x, &
                                                            local_start_idx:end_y, &
                                                            local_start_idx:end_z))
             end do
@@ -284,9 +284,9 @@ contains
         do i = 1, 6
                 allocate (stat_eff_visc(i)%vf(1:4))
         end do
-        do j = 1, 6
-            do k = 1, 4
-                allocate (stat_eff_visc(i)%vf(k)%sf(local_start_idx:end_x, &
+        do i = 1, 6
+            do j = 1, 4
+                allocate (stat_eff_visc(i)%vf(j)%sf(local_start_idx:end_x, &
                                                     local_start_idx:end_y, &
                                                     local_start_idx:end_z))
             end do
@@ -714,8 +714,6 @@ contains
 
             ! Read the data for each variable
             do i = sys_size + 1, alt_sys
-                print *, 'HERE', i
-
                 var_MOK = int(i, MPI_OFFSET_KIND)
 
                 ! Initial displacement to skip at beginning of file

@@ -389,7 +389,7 @@ contains
             do i = 1, 6
                 do k = 1, 4
                     q_sf = stat_reynolds_stress(i)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_reynolds_stress', i, '_', j, '_m', k
+                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_reynolds_stress', i, '_m', k
                     call s_write_variable_to_formatted_database_file(varname, t_step)
 
                     varname(:) = ' '
@@ -398,7 +398,7 @@ contains
             do i = 1, 6
                 do k = 1, 4
                     q_sf = stat_eff_visc(i)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_eff_visc', i, '_', j, '_m', k
+                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_eff_visc', i, '_m', k
                     call s_write_variable_to_formatted_database_file(varname, t_step)
 
                     varname(:) = ' '

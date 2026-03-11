@@ -14,24 +14,24 @@ Re = 1500.0
 P = 101325.0
 rho = 1.225
 
-v1 = M * np.sqrt(gam_a * P / rho) 
+v1 = M * np.sqrt(gam_a * P / rho)
 mu = rho * v1 * D / Re
 
-#print('mu: ', mu)
-#print('v1: ', v1)
-#print('rho: ', rho)
-#print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
+# print('mu: ', mu)
+# print('v1: ', v1)
+# print('rho: ', rho)
+# print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 0.8E-06
-Nt = int(L * 4 / v1 / dt)
-t_save = int(Nt/5)
+Nt = 20 #int(L * 4 / v1 / dt)
+t_save = int(Nt/4)
 t_step_start_stats = int(Nt/2)
 
-#print(Nt, t_step_start_stats)
+# print(Nt, t_step_start_stats)
 
-Nx = 399
-Ny = 399
-Nz = 399
+Nx = 127
+Ny = 127
+Nz = 127
 
 # load initial sphere locations
 sphere_loc = np.loadtxt('sphere_array_locations.txt')
@@ -50,7 +50,7 @@ for i in range(N_sphere):
         f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
         f"patch_ib({i+1})%radius": D / 2,
         f"patch_ib({i+1})%slip": "F",
-        })
+    })
 
 # Configuring case dictionary
 case_dict = {
@@ -160,7 +160,7 @@ case_dict = {
     # do not store a levelset field for every ib (only works for spheres)
     # MPI domain decomposition into slabs instead of blocks
     "slab_domain_decomposition": "T",
-    }
+}
 
 case_dict.update(ib_dict)
 
