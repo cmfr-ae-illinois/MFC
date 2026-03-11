@@ -106,8 +106,8 @@ contains
             intent(in) :: bc_type
 
         type(scalar_field), intent(inout), optional :: filtered_fluid_indicator_function
-        type(vector_field), dimension(num_dims, num_dims), intent(inout), optional :: stat_reynolds_stress
-        type(vector_field), dimension(num_dims, num_dims), intent(inout), optional :: stat_eff_visc
+        type(vector_field), dimension(6), intent(inout), optional :: stat_reynolds_stress
+        type(vector_field), dimension(6), intent(inout), optional :: stat_eff_visc
         type(vector_field), dimension(num_dims), intent(inout), optional :: stat_int_mom_exch
         type(vector_field), dimension(E_idx), intent(inout), optional :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(inout), optional :: stat_filtered_pressure
@@ -830,8 +830,8 @@ contains
         type(scalar_field), intent(inout), optional :: filtered_fluid_indicator_function
         type(vector_field), dimension(E_idx), intent(inout), optional :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(inout), optional :: stat_filtered_pressure
-        type(vector_field), dimension(num_dims, num_dims), intent(inout), optional :: stat_reynolds_stress
-        type(vector_field), dimension(num_dims, num_dims), intent(inout), optional :: stat_eff_visc
+        type(vector_field), dimension(6), intent(inout), optional :: stat_reynolds_stress
+        type(vector_field), dimension(6), intent(inout), optional :: stat_eff_visc
         type(vector_field), dimension(num_dims), intent(inout), optional :: stat_int_mom_exch
 
         type(integer_field), &

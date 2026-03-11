@@ -18,15 +18,15 @@ module m_compute_statistics
  s_compute_statistical_moments
 
     ! terms for computing 1st, 2nd, 3rd, and 4th order statistical moments
-    type(vector_field), allocatable, dimension(:, :) :: Msn_reynolds_stress
-    type(vector_field), allocatable, dimension(:, :) :: Msn_eff_visc
+    type(vector_field), allocatable, dimension(:) :: Msn_reynolds_stress
+    type(vector_field), allocatable, dimension(:) :: Msn_eff_visc
     type(vector_field), allocatable, dimension(:) :: Msn_int_mom_exch
     type(vector_field), allocatable, dimension(:) :: Msn_q_cons_filtered
     type(scalar_field), allocatable, dimension(:) :: Msn_filtered_pressure
 
     ! 1st, 2nd, 3rd, and 4th statistical moments for unclosed terms in volume filtered momentum equation
-    type(vector_field), allocatable, dimension(:, :), public :: stat_reynolds_stress
-    type(vector_field), allocatable, dimension(:, :), public :: stat_eff_visc
+    type(vector_field), allocatable, dimension(:), public :: stat_reynolds_stress
+    type(vector_field), allocatable, dimension(:), public :: stat_eff_visc
     type(vector_field), allocatable, dimension(:), public :: stat_int_mom_exch
     type(vector_field), allocatable, dimension(:), public :: stat_q_cons_filtered
     type(scalar_field), allocatable, dimension(:), public :: stat_filtered_pressure
@@ -40,34 +40,26 @@ contains
     subroutine s_initialize_statistics_module
         integer :: i, j, k
 
-        @:ALLOCATE(Msn_reynolds_stress(num_dims, num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(Msn_reynolds_stress(i, j)%vf(1:4))
-            end do
+        @:ALLOCATE(Msn_reynolds_stress(6))
+        do i = 1, 6
+            @:ALLOCATE(Msn_reynolds_stress(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:ALLOCATE(Msn_reynolds_stress(i, j)%vf(k)%sf(0:m, 0:n, 0:p))
-                end do
-                @:ACC_SETUP_VFs(Msn_reynolds_stress(i, j))
+        do i = 1, 6
+            do k = 1, 4
+                @:ALLOCATE(Msn_reynolds_stress(i)%vf(k)%sf(0:m, 0:n, 0:p))
             end do
+            @:ACC_SETUP_VFs(Msn_reynolds_stress(i))
         end do
 
-        @:ALLOCATE(Msn_eff_visc(num_dims, num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(Msn_eff_visc(i, j)%vf(1:4))
-            end do
+        @:ALLOCATE(Msn_eff_visc(6))
+        do i = 1, 6
+            @:ALLOCATE(Msn_eff_visc(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:ALLOCATE(Msn_eff_visc(i, j)%vf(k)%sf(0:m, 0:n, 0:p))
-                end do
-                @:ACC_SETUP_VFs(Msn_eff_visc(i, j))
+        do i = 1, 6
+            do k = 1, 4
+                @:ALLOCATE(Msn_eff_visc(i)%vf(k)%sf(0:m, 0:n, 0:p))
             end do
+            @:ACC_SETUP_VFs(Msn_eff_visc(i))
         end do
 
         @:ALLOCATE(Msn_int_mom_exch(1:num_dims))
@@ -98,34 +90,26 @@ contains
             @:ACC_SETUP_SFs(Msn_filtered_pressure(i))
         end do
 
-        @:ALLOCATE(stat_reynolds_stress(num_dims, num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(stat_reynolds_stress(i, j)%vf(1:4))
-            end do
+        @:ALLOCATE(stat_reynolds_stress(6))
+        do i = 1, 6
+            @:ALLOCATE(stat_reynolds_stress(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:ALLOCATE(stat_reynolds_stress(i, j)%vf(k)%sf(0:m, 0:n, 0:p))
-                end do
-                @:ACC_SETUP_VFs(stat_reynolds_stress(i, j))
+        do i = 1, 6
+            do k = 1, 4
+                @:ALLOCATE(stat_reynolds_stress(i)%vf(k)%sf(0:m, 0:n, 0:p))
             end do
+            @:ACC_SETUP_VFs(stat_reynolds_stress(i))
         end do
 
-        @:ALLOCATE(stat_eff_visc(num_dims, num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(stat_eff_visc(i, j)%vf(1:4))
-            end do
+        @:ALLOCATE(stat_eff_visc(6))
+        do i = 1, 6
+            @:ALLOCATE(stat_eff_visc(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:ALLOCATE(stat_eff_visc(i, j)%vf(k)%sf(0:m, 0:n, 0:p))
-                end do
-                @:ACC_SETUP_VFs(stat_eff_visc(i, j))
+        do i = 1, 6
+            do k = 1, 4
+                @:ALLOCATE(stat_eff_visc(i)%vf(k)%sf(0:m, 0:n, 0:p))
             end do
+            @:ACC_SETUP_VFs(stat_eff_visc(i))
         end do
 
         @:ALLOCATE(stat_int_mom_exch(1:num_dims))
@@ -173,11 +157,11 @@ contains
         ns = real(t_step - t_step_start_stats, wp)
 
         ! update M1, M2, M3, M4
+        do i = 1, 6
+            call s_update_statistics(ns, reynolds_stress(i), Msn_reynolds_stress(i)%vf)
+            call s_update_statistics(ns, eff_visc(i), Msn_eff_visc(i)%vf)
+        end do
         do i = 1, num_dims
-            do j = 1, num_dims
-                call s_update_statistics(ns, reynolds_stress(i, j), Msn_reynolds_stress(i, j)%vf)
-                call s_update_statistics(ns, eff_visc(i, j), Msn_eff_visc(i, j)%vf)
-            end do
             call s_update_statistics(ns, int_mom_exch(i), Msn_int_mom_exch(i)%vf)
         end do
         do i = 1, E_idx
@@ -187,11 +171,11 @@ contains
 
         ! compute 1st, 2nd, 3rd, 4th order statistical moments
         if (t_step == t_step_stop - 1) then ! only compute at final time
+            do i = 1, 6
+                call s_compute_statistical_moments(ns, Msn_reynolds_stress(i)%vf, stat_reynolds_stress(i)%vf)
+                call s_compute_statistical_moments(ns, Msn_eff_visc(i)%vf, stat_eff_visc(i)%vf)
+            end do
             do i = 1, num_dims
-                do j = 1, num_dims
-                    call s_compute_statistical_moments(ns, Msn_reynolds_stress(i, j)%vf, stat_reynolds_stress(i, j)%vf)
-                    call s_compute_statistical_moments(ns, Msn_eff_visc(i, j)%vf, stat_eff_visc(i, j)%vf)
-                end do
                 call s_compute_statistical_moments(ns, Msn_int_mom_exch(i)%vf, stat_int_mom_exch(i)%vf)
             end do
             do i = 1, E_idx
@@ -253,23 +237,19 @@ contains
     subroutine s_finalize_statistics_module
         integer :: i, j, k
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:DEALLOCATE(Msn_reynolds_stress(i, j)%vf(k)%sf)
-                end do
-                @:DEALLOCATE(Msn_reynolds_stress(i, j)%vf)
+        do i = 1, 6
+            do k = 1, 4
+                @:DEALLOCATE(Msn_reynolds_stress(i)%vf(k)%sf)
             end do
+            @:DEALLOCATE(Msn_reynolds_stress(i)%vf)
         end do
         @:DEALLOCATE(Msn_reynolds_stress)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:DEALLOCATE(Msn_eff_visc(i, j)%vf(k)%sf)
-                end do
-                @:DEALLOCATE(Msn_eff_visc(i, j)%vf)
+        do i = 1, 6
+            do k = 1, 4
+                @:DEALLOCATE(Msn_eff_visc(i)%vf(k)%sf)
             end do
+            @:DEALLOCATE(Msn_eff_visc(i)%vf)
         end do
         @:DEALLOCATE(Msn_eff_visc)
 
@@ -294,23 +274,19 @@ contains
         end do
         @:DEALLOCATE(Msn_filtered_pressure)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:DEALLOCATE(stat_reynolds_stress(i, j)%vf(k)%sf)
-                end do
-                @:DEALLOCATE(stat_reynolds_stress(i, j)%vf)
+        do i = 1, 6
+            do k = 1, 4
+                @:DEALLOCATE(stat_reynolds_stress(i)%vf(k)%sf)
             end do
+            @:DEALLOCATE(stat_reynolds_stress(i)%vf)
         end do
         @:DEALLOCATE(stat_reynolds_stress)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    @:DEALLOCATE(stat_eff_visc(i, j)%vf(k)%sf)
-                end do
-                @:DEALLOCATE(stat_eff_visc(i, j)%vf)
+        do i = 1, 6
+            do k = 1, 4
+                @:DEALLOCATE(stat_eff_visc(i)%vf(k)%sf)
             end do
+            @:DEALLOCATE(stat_eff_visc(i)%vf)
         end do
         @:DEALLOCATE(stat_eff_visc)
 

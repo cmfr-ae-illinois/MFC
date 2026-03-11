@@ -377,6 +377,7 @@ contains
 
         ! Adding filtered quantities
         if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+            print *, 'WRITING FILTERED DATA'
             ! filtered fluid indicator
             q_sf = filtered_fluid_indicator_function%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
             write (varname, '(A)') 'filtered_fluid_indicator_function'
@@ -385,26 +386,22 @@ contains
             varname(:) = ' '
 
             ! filtered vars stats
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        q_sf = stat_reynolds_stress(i, j)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                        write (varname, '(A,I0,A,I0,A,I0)') 'stat_reynolds_stress', i, '_', j, '_m', k
-                        call s_write_variable_to_formatted_database_file(varname, t_step)
+            do i = 1, 6
+                do k = 1, 4
+                    q_sf = stat_reynolds_stress(i)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_reynolds_stress', i, '_', j, '_m', k
+                    call s_write_variable_to_formatted_database_file(varname, t_step)
 
-                        varname(:) = ' '
-                    end do
+                    varname(:) = ' '
                 end do
             end do
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        q_sf = stat_eff_visc(i, j)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                        write (varname, '(A,I0,A,I0,A,I0)') 'stat_eff_visc', i, '_', j, '_m', k
-                        call s_write_variable_to_formatted_database_file(varname, t_step)
+            do i = 1, 6
+                do k = 1, 4
+                    q_sf = stat_eff_visc(i)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
+                    write (varname, '(A,I0,A,I0,A,I0)') 'stat_eff_visc', i, '_', j, '_m', k
+                    call s_write_variable_to_formatted_database_file(varname, t_step)
 
-                        varname(:) = ' '
-                    end do
+                    varname(:) = ' '
                 end do
             end do
             do i = 1, num_dims

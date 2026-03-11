@@ -998,12 +998,10 @@ contains
         call nvtxStartRange("SAVE-DATA")
         if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
             $:GPU_UPDATE(host='[filtered_fluid_indicator_function%sf]')
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        $:GPU_UPDATE(host='[stat_reynolds_stress(i, j)%vf(k)%sf]')
-                        $:GPU_UPDATE(host='[stat_eff_visc(i, j)%vf(k)%sf]')
-                    end do
+            do i = 1, 6
+                do k = 1, 4
+                    $:GPU_UPDATE(host='[stat_reynolds_stress(i)%vf(k)%sf]')
+                    $:GPU_UPDATE(host='[stat_eff_visc(i)%vf(k)%sf]')
                 end do
             end do
             do i = 1, num_dims

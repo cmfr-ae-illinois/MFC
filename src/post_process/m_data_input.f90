@@ -63,8 +63,8 @@ module m_data_input
     type(integer_field), public :: ib_markers
 
     type(scalar_field), public :: filtered_fluid_indicator_function
-    type(vector_field), allocatable, dimension(:, :), public :: stat_reynolds_stress
-    type(vector_field), allocatable, dimension(:, :), public :: stat_eff_visc
+    type(vector_field), allocatable, dimension(:), public :: stat_reynolds_stress
+    type(vector_field), allocatable, dimension(:), public :: stat_eff_visc
     type(vector_field), allocatable, dimension(:), public :: stat_int_mom_exch
     type(vector_field), allocatable, dimension(:), public :: stat_q_cons_filtered
     type(scalar_field), allocatable, dimension(:), public :: stat_filtered_pressure
@@ -270,33 +270,25 @@ contains
                                                    local_start_idx:end_z))
         end do
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                allocate (stat_reynolds_stress(i, j)%vf(1:4))
-            end do
+        do i = 1, 6
+            allocate (stat_reynolds_stress(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    allocate (stat_reynolds_stress(i, j)%vf(k)%sf(local_start_idx:end_x, &
-                                                                  local_start_idx:end_y, &
-                                                                  local_start_idx:end_z))
-                end do
+        do i = 1, 6
+            do k = 1, 4
+                allocate (stat_reynolds_stress(i)%vf(k)%sf(local_start_idx:end_x, &
+                                                           local_start_idx:end_y, &
+                                                           local_start_idx:end_z))
             end do
         end do
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                allocate (stat_eff_visc(i, j)%vf(1:4))
-            end do
+        do i = 1, 6
+                allocate (stat_eff_visc(i)%vf(1:4))
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    allocate (stat_eff_visc(i, j)%vf(k)%sf(local_start_idx:end_x, &
-                                                           local_start_idx:end_y, &
-                                                           local_start_idx:end_z))
-                end do
+        do j = 1, 6
+            do k = 1, 4
+                allocate (stat_eff_visc(i)%vf(k)%sf(local_start_idx:end_x, &
+                                                    local_start_idx:end_y, &
+                                                    local_start_idx:end_z))
             end do
         end do
 
@@ -694,6 +686,8 @@ contains
 
         alt_sys = sys_size + volume_filter_dt%stat_size ! filtered indicator, stats of: R_u, R_mu, F_imet, q_cons_filtered, pressure
 
+        print *, 'READING FILTERED DATA', alt_sys
+
         ! Open the file to read volume filtered variables
         write (file_loc, '(I0,A)') t_step, '.dat'
         file_loc = trim(case_dir)//'/restart_data'//trim(mpiiofs)//trim(file_loc)
@@ -706,8 +700,10 @@ contains
                                                 stat_q_cons_filtered, stat_filtered_pressure, &
                                                 stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
 
+            ! Size of local arrays
             data_size = (m + 1)*(n + 1)*(p + 1)
 
+            ! Resize some integers so MPI can read even the biggest file
             m_MOK = int(m_glb + 1, MPI_OFFSET_KIND)
             n_MOK = int(n_glb + 1, MPI_OFFSET_KIND)
             p_MOK = int(p_glb + 1, MPI_OFFSET_KIND)
@@ -718,6 +714,8 @@ contains
 
             ! Read the data for each variable
             do i = sys_size + 1, alt_sys
+                print *, 'HERE', i
+
                 var_MOK = int(i, MPI_OFFSET_KIND)
 
                 ! Initial displacement to skip at beginning of file
@@ -754,8 +752,8 @@ contains
         if (q_filtered_wrt) then
             allocate (stat_q_cons_filtered(1:E_idx))
             allocate (stat_filtered_pressure(1:4))
-            allocate (stat_reynolds_stress(1:num_dims, 1:num_dims))
-            allocate (stat_eff_visc(1:num_dims, 1:num_dims))
+            allocate (stat_reynolds_stress(1:6))
+            allocate (stat_eff_visc(1:6))
             allocate (stat_int_mom_exch(1:num_dims))
         end if
 
@@ -860,23 +858,19 @@ contains
             end do
             deallocate (stat_filtered_pressure)
 
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        deallocate (stat_reynolds_stress(i, j)%vf(k)%sf)
-                    end do
-                    deallocate (stat_reynolds_stress(i, j)%vf)
+            do i = 1, 6
+                do k = 1, 4
+                    deallocate (stat_reynolds_stress(i)%vf(k)%sf)
                 end do
+                deallocate (stat_reynolds_stress(i)%vf)
             end do
             deallocate (stat_reynolds_stress)
 
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        deallocate (stat_eff_visc(i, j)%vf(k)%sf)
-                    end do
-                    deallocate (stat_eff_visc(i, j)%vf)
+            do i = 1, 6
+                do k = 1, 4
+                    deallocate (stat_eff_visc(i)%vf(k)%sf)
                 end do
+                deallocate (stat_eff_visc(i)%vf)
             end do
             deallocate (stat_eff_visc)
 

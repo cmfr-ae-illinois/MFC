@@ -257,8 +257,8 @@ contains
         type(scalar_field), intent(in) :: filtered_fluid_indicator_function
         type(vector_field), dimension(E_idx), intent(in) :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(in) :: stat_filtered_pressure
-        type(vector_field), dimension(num_dims, num_dims), intent(in) :: stat_reynolds_stress
-        type(vector_field), dimension(num_dims, num_dims), intent(in) :: stat_eff_visc
+        type(vector_field), dimension(6), intent(in) :: stat_reynolds_stress
+        type(vector_field), dimension(6), intent(in) :: stat_eff_visc
         type(vector_field), dimension(num_dims), intent(in) :: stat_int_mom_exch
 
         integer, dimension(num_dims) :: sizes_glb, sizes_loc
@@ -276,18 +276,14 @@ contains
         alt_sys = sys_size + volume_filter_dt%stat_size
 
         MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_fluid_idx)%sf => filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p)
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_re_idx + (i - 1)*4*num_dims + (j - 1)*4 + (k - 1))%sf => stat_reynolds_stress(i, j)%vf(k)%sf(0:m, 0:n, 0:p)
-                end do
+        do i = 1, 6
+            do k = 1, 4
+                MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_re_idx + (i - 1)*4 + (k - 1))%sf => stat_reynolds_stress(i)%vf(k)%sf(0:m, 0:n, 0:p)
             end do
         end do
-        do i = 1, num_dims
-            do j = 1, num_dims
-                do k = 1, 4
-                    MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_visc_idx + (i - 1)*4*num_dims + (j - 1)*4 + (k - 1))%sf => stat_eff_visc(i, j)%vf(k)%sf(0:m, 0:n, 0:p)
-                end do
+        do i = 1, 6
+            do k = 1, 4
+                MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_visc_idx + (i - 1)*4 + (k - 1))%sf => stat_eff_visc(i)%vf(k)%sf(0:m, 0:n, 0:p)
             end do
         end do
         do i = 1, num_dims

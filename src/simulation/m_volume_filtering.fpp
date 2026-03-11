@@ -50,15 +50,15 @@ module m_volume_filtering
     type(scalar_field), public :: filtered_pressure
 
     ! viscous and pressure+viscous stress tensors
-    type(scalar_field), allocatable, dimension(:, :) :: visc_stress
-    type(scalar_field), allocatable, dimension(:, :) :: pres_visc_stress
+    type(scalar_field), allocatable, dimension(:) :: visc_stress
+    type(scalar_field), allocatable, dimension(:) :: pres_visc_stress
 
     ! divergence of stress tensor
     type(scalar_field), allocatable, dimension(:) :: div_pres_visc_stress
 
     ! unclosed terms in volume filtered momentum equation
-    type(scalar_field), allocatable, dimension(:, :), public :: reynolds_stress
-    type(scalar_field), allocatable, dimension(:, :), public :: eff_visc
+    type(scalar_field), allocatable, dimension(:), public :: reynolds_stress
+    type(scalar_field), allocatable, dimension(:), public :: eff_visc
     type(scalar_field), allocatable, dimension(:), public :: int_mom_exch
 
     ! x-,y-,z-direction forces on particles
@@ -147,24 +147,20 @@ contains
             idwbuff(3)%beg:idwbuff(3)%end))
         @:ACC_SETUP_SFs(filtered_pressure)
 
-        @:ALLOCATE(visc_stress(1:num_dims, 1:num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(visc_stress(i, j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(visc_stress(i, j))
-            end do
+        @:ALLOCATE(visc_stress(1:6))
+        do i = 1, 6
+            @:ALLOCATE(visc_stress(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(visc_stress(i))
         end do
 
-        @:ALLOCATE(pres_visc_stress(1:num_dims, 1:num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(pres_visc_stress(i, j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(pres_visc_stress(i, j))
-            end do
+        @:ALLOCATE(pres_visc_stress(1:6))
+        do i = 1, 6
+            @:ALLOCATE(pres_visc_stress(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(pres_visc_stress(i))
         end do
 
         @:ALLOCATE(div_pres_visc_stress(1:num_dims))
@@ -175,24 +171,20 @@ contains
             @:ACC_SETUP_SFs(div_pres_visc_stress(i))
         end do
 
-        @:ALLOCATE(reynolds_stress(1:num_dims, 1:num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(reynolds_stress(i, j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(reynolds_stress(i, j))
-            end do
+        @:ALLOCATE(reynolds_stress(1:6))
+        do i = 1, 6
+            @:ALLOCATE(reynolds_stress(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(reynolds_stress(i))
         end do
 
-        @:ALLOCATE(eff_visc(1:num_dims, 1:num_dims))
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:ALLOCATE(eff_visc(i, j)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-                    idwbuff(2)%beg:idwbuff(2)%end, &
-                    idwbuff(3)%beg:idwbuff(3)%end))
-                @:ACC_SETUP_SFs(eff_visc(i, j))
-            end do
+        @:ALLOCATE(eff_visc(1:6))
+        do i = 1, 6
+            @:ALLOCATE(eff_visc(i)%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                idwbuff(2)%beg:idwbuff(2)%end, &
+                idwbuff(3)%beg:idwbuff(3)%end))
+            @:ACC_SETUP_SFs(eff_visc(i))
         end do
 
         @:ALLOCATE(int_mom_exch(1:num_dims))
@@ -223,10 +215,10 @@ contains
         Nzloc = p + 1
 
         !< batch size used in MPI_Alltoall
-        fft_batch_size = sys_size + 1 + num_dims**2 + num_dims**2 + num_dims ! conservative vars, pressure, reynolds stress, viscous stress, interphase momentum exchange
+        fft_batch_size = sys_size + 1 + 6 + 6 + 3 ! conservative vars, pressure, reynolds stress, viscous stress, interphase momentum exchange
         reynolds_stress_idx = sys_size + 1
-        eff_visc_idx = reynolds_stress_idx + num_dims**2
-        int_mom_exch_idx = eff_visc_idx + num_dims**2
+        eff_visc_idx = reynolds_stress_idx + 6
+        int_mom_exch_idx = eff_visc_idx + 6
 
         $:GPU_UPDATE(device='[Nx, Ny, Nz, fft_norm, NxC, Nyloc, Nzloc, fft_batch_size, reynolds_stress_idx, eff_visc_idx, int_mom_exch_idx]')
 
@@ -623,7 +615,7 @@ contains
 
     ! compute viscous stress tensor
     subroutine s_generate_viscous_stress_tensor(visc_stress, q_prim_vf, dyn_visc)
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: visc_stress
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         real(wp), intent(in) :: dyn_visc
         real(wp) :: dudx, dudy, dudz, dvdx, dvdy, dvdz, dwdx, dwdy, dwdz ! spatial velocity derivatives
@@ -647,15 +639,12 @@ contains
                     dwdz = (q_prim_vf(4)%sf(i, j, k + 1) - q_prim_vf(4)%sf(i, j, k - 1))/(2._wp*dz(k))
 
                     ! viscous stress tensor, visc_stress(row, column)
-                    visc_stress(1, 1)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dudx - 2._wp/3._wp*(dvdy + dwdz))
-                    visc_stress(1, 2)%sf(i, j, k) = dyn_visc*(dudy + dvdx)
-                    visc_stress(1, 3)%sf(i, j, k) = dyn_visc*(dudz + dwdx)
-                    visc_stress(2, 1)%sf(i, j, k) = dyn_visc*(dvdx + dudy)
-                    visc_stress(2, 2)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dvdy - 2._wp/3._wp*(dudx + dwdz))
-                    visc_stress(2, 3)%sf(i, j, k) = dyn_visc*(dvdz + dwdy)
-                    visc_stress(3, 1)%sf(i, j, k) = dyn_visc*(dwdx + dudz)
-                    visc_stress(3, 2)%sf(i, j, k) = dyn_visc*(dwdy + dvdz)
-                    visc_stress(3, 3)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dwdz - 2._wp/3._wp*(dudx + dvdy))
+                    visc_stress(1)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dudx - 2._wp/3._wp*(dvdy + dwdz))
+                    visc_stress(2)%sf(i, j, k) = dyn_visc*(dudy + dvdx)
+                    visc_stress(3)%sf(i, j, k) = dyn_visc*(dudz + dwdx)
+                    visc_stress(4)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dvdy - 2._wp/3._wp*(dudx + dwdz))
+                    visc_stress(5)%sf(i, j, k) = dyn_visc*(dvdz + dwdy)
+                    visc_stress(6)%sf(i, j, k) = dyn_visc*(4._wp/3._wp*dwdz - 2._wp/3._wp*(dudx + dvdy))
                 end do
             end do
         end do
@@ -664,8 +653,8 @@ contains
     end subroutine s_generate_viscous_stress_tensor
 
     subroutine s_compute_stress_tensor(pres_visc_stress, visc_stress, q_prim_vf)
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: pres_visc_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(in) :: visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: pres_visc_stress
+        type(scalar_field), dimension(6), intent(in) :: visc_stress
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         integer :: i, j, k
 
@@ -673,15 +662,12 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    pres_visc_stress(1, 1)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(1, 1)%sf(i, j, k)
-                    pres_visc_stress(1, 2)%sf(i, j, k) = -visc_stress(1, 2)%sf(i, j, k)
-                    pres_visc_stress(1, 3)%sf(i, j, k) = -visc_stress(1, 3)%sf(i, j, k)
-                    pres_visc_stress(2, 1)%sf(i, j, k) = -visc_stress(2, 1)%sf(i, j, k)
-                    pres_visc_stress(2, 2)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(2, 2)%sf(i, j, k)
-                    pres_visc_stress(2, 3)%sf(i, j, k) = -visc_stress(2, 3)%sf(i, j, k)
-                    pres_visc_stress(3, 1)%sf(i, j, k) = -visc_stress(3, 1)%sf(i, j, k)
-                    pres_visc_stress(3, 2)%sf(i, j, k) = -visc_stress(3, 2)%sf(i, j, k)
-                    pres_visc_stress(3, 3)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(3, 3)%sf(i, j, k)
+                    pres_visc_stress(1)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(1)%sf(i, j, k)
+                    pres_visc_stress(2)%sf(i, j, k) = -visc_stress(2)%sf(i, j, k)
+                    pres_visc_stress(3)%sf(i, j, k) = -visc_stress(3)%sf(i, j, k)
+                    pres_visc_stress(4)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(4)%sf(i, j, k)
+                    pres_visc_stress(5)%sf(i, j, k) = -visc_stress(5)%sf(i, j, k)
+                    pres_visc_stress(6)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(6)%sf(i, j, k)
                 end do
             end do
         end do
@@ -692,24 +678,24 @@ contains
     !< compute the divergence of the pressure-viscous stress tensor
     subroutine s_compute_divergence_stress_tensor(div_stress_tensor, stress_tensor)
         type(scalar_field), dimension(num_dims), intent(inout) :: div_stress_tensor
-        type(scalar_field), dimension(num_dims, num_dims), intent(in) :: stress_tensor
+        type(scalar_field), dimension(6), intent(in) :: stress_tensor
         integer :: i, j, k
 
         $:GPU_PARALLEL_LOOP(collapse=3)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    div_stress_tensor(1)%sf(i, j, k) = (stress_tensor(1, 1)%sf(i + 1, j, k) - stress_tensor(1, 1)%sf(i - 1, j, k))/(2._wp*dx(i)) &
-                                                       + (stress_tensor(1, 2)%sf(i, j + 1, k) - stress_tensor(1, 2)%sf(i, j - 1, k))/(2._wp*dy(j)) &
-                                                       + (stress_tensor(1, 3)%sf(i, j, k + 1) - stress_tensor(1, 3)%sf(i, j, k - 1))/(2._wp*dz(k))
+                    div_stress_tensor(1)%sf(i, j, k) = (stress_tensor(1)%sf(i + 1, j, k) - stress_tensor(1)%sf(i - 1, j, k))/(2._wp*dx(i)) &
+                                                     + (stress_tensor(2)%sf(i, j + 1, k) - stress_tensor(2)%sf(i, j - 1, k))/(2._wp*dy(j)) &
+                                                     + (stress_tensor(3)%sf(i, j, k + 1) - stress_tensor(3)%sf(i, j, k - 1))/(2._wp*dz(k))
 
-                    div_stress_tensor(2)%sf(i, j, k) = (stress_tensor(2, 1)%sf(i + 1, j, k) - stress_tensor(2, 1)%sf(i - 1, j, k))/(2._wp*dx(i)) &
-                                                       + (stress_tensor(2, 2)%sf(i, j + 1, k) - stress_tensor(2, 2)%sf(i, j - 1, k))/(2._wp*dy(j)) &
-                                                       + (stress_tensor(2, 3)%sf(i, j, k + 1) - stress_tensor(2, 3)%sf(i, j, k - 1))/(2._wp*dz(k))
+                    div_stress_tensor(2)%sf(i, j, k) = (stress_tensor(2)%sf(i + 1, j, k) - stress_tensor(2)%sf(i - 1, j, k))/(2._wp*dx(i)) &
+                                                     + (stress_tensor(4)%sf(i, j + 1, k) - stress_tensor(4)%sf(i, j - 1, k))/(2._wp*dy(j)) &
+                                                     + (stress_tensor(5)%sf(i, j, k + 1) - stress_tensor(5)%sf(i, j, k - 1))/(2._wp*dz(k))
 
-                    div_stress_tensor(3)%sf(i, j, k) = (stress_tensor(3, 1)%sf(i + 1, j, k) - stress_tensor(3, 1)%sf(i - 1, j, k))/(2._wp*dx(i)) &
-                                                       + (stress_tensor(3, 2)%sf(i, j + 1, k) - stress_tensor(3, 2)%sf(i, j - 1, k))/(2._wp*dy(j)) &
-                                                       + (stress_tensor(3, 3)%sf(i, j, k + 1) - stress_tensor(3, 3)%sf(i, j, k - 1))/(2._wp*dz(k))
+                    div_stress_tensor(3)%sf(i, j, k) = (stress_tensor(3)%sf(i + 1, j, k) - stress_tensor(3)%sf(i - 1, j, k))/(2._wp*dx(i)) &
+                                                     + (stress_tensor(5)%sf(i, j + 1, k) - stress_tensor(5)%sf(i, j - 1, k))/(2._wp*dy(j)) &
+                                                     + (stress_tensor(6)%sf(i, j, k + 1) - stress_tensor(6)%sf(i, j, k - 1))/(2._wp*dz(k))
                 end do
             end do
         end do
@@ -722,9 +708,9 @@ contains
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
         real(wp), intent(in) :: dyn_visc
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: reynolds_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: visc_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: pres_visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: reynolds_stress
+        type(scalar_field), dimension(6), intent(inout) :: visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: pres_visc_stress
         type(scalar_field), dimension(num_dims), intent(inout) :: div_pres_visc_stress
         type(integer_field), dimension(num_dims, -1:1), intent(in) :: bc_type
 
@@ -735,13 +721,12 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    $:GPU_LOOP(parallelism='[seq]')
-                    do l = 1, num_dims
-                        $:GPU_LOOP(parallelism='[seq]')
-                        do q = 1, num_dims
-                            reynolds_stress(l, q)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb - 1 + l)%sf(i, j, k)*q_prim_vf(momxb - 1 + q)%sf(i, j, k)) ! rho*(u x u)
-                        end do
-                    end do
+                    reynolds_stress(1)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb    )%sf(i, j, k)) ! rho*(u x u)
+                    reynolds_stress(2)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb + 1)%sf(i, j, k)) 
+                    reynolds_stress(3)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
+                    reynolds_stress(4)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 1)%sf(i, j, k)*q_prim_vf(momxb + 1)%sf(i, j, k)) 
+                    reynolds_stress(5)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 1)%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
+                    reynolds_stress(6)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 2)%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
                 end do
             end do
         end do
@@ -758,10 +743,8 @@ contains
         call s_compute_stress_tensor(pres_visc_stress, visc_stress, q_prim_vf)
 
         ! set stress tensor buffers for taking divergence
-        do i = 1, num_dims
-            do j = 1, num_dims
-                call s_populate_scalarfield_buffers(bc_type, pres_visc_stress(i, j))
-            end do
+        do i = 1, 6
+            call s_populate_scalarfield_buffers(bc_type, pres_visc_stress(i))
         end do
 
         ! interphase momentum exchange term setup
@@ -771,21 +754,19 @@ contains
 
     subroutine s_compute_pseudo_turbulent_reynolds_stress(q_cons_filtered, reynolds_stress)
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_filtered
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: reynolds_stress
+        type(scalar_field), dimension(6), intent(inout) :: reynolds_stress
         integer :: i, j, k, l, q
 
         $:GPU_PARALLEL_LOOP(collapse=3)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    $:GPU_LOOP(parallelism='[seq]')
-                    do l = 1, num_dims
-                        $:GPU_LOOP(parallelism='[seq]')
-                        do q = 1, num_dims
-                            reynolds_stress(l, q)%sf(i, j, k) = reynolds_stress(l, q)%sf(i, j, k) &
-                                                                - (q_cons_filtered(momxb - 1 + l)%sf(i, j, k)*q_cons_filtered(momxb - 1 + q)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                        end do
-                    end do
+                    reynolds_stress(1)%sf(i, j, k) = reynolds_stress(1)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb    )%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(2)%sf(i, j, k) = reynolds_stress(2)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(3)%sf(i, j, k) = reynolds_stress(3)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(4)%sf(i, j, k) = reynolds_stress(4)%sf(i, j, k) - (q_cons_filtered(momxb + 1)%sf(i, j, k)*q_cons_filtered(momxb + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(5)%sf(i, j, k) = reynolds_stress(5)%sf(i, j, k) - (q_cons_filtered(momxb + 1)%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(6)%sf(i, j, k) = reynolds_stress(6)%sf(i, j, k) - (q_cons_filtered(momxb + 2)%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
                 end do
             end do
         end do
@@ -795,8 +776,8 @@ contains
 
     subroutine s_compute_effective_viscosity(q_prim_filtered, eff_visc, visc_stress, dyn_visc, bc_type)
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_filtered
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: eff_visc
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: eff_visc
+        type(scalar_field), dimension(6), intent(inout) :: visc_stress
         real(wp), intent(in) :: dyn_visc
         type(integer_field), dimension(num_dims, -1:1), intent(in) :: bc_type
 
@@ -816,11 +797,8 @@ contains
             do j = 0, n
                 do k = 0, p
                     $:GPU_LOOP(parallelism='[seq]')
-                    do l = 1, num_dims
-                        $:GPU_LOOP(parallelism='[seq]')
-                        do q = 1, num_dims
-                            eff_visc(l, q)%sf(i, j, k) = eff_visc(l, q)%sf(i, j, k) - visc_stress(l, q)%sf(i, j, k)
-                        end do
+                    do l = 1, 6
+                        eff_visc(l)%sf(i, j, k) = eff_visc(l)%sf(i, j, k) - visc_stress(l)%sf(i, j, k)
                     end do
                 end do
             end do
@@ -1039,11 +1017,11 @@ contains
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_filtered
         type(scalar_field), intent(inout) :: pressure
         type(scalar_field), intent(inout) :: filtered_pressure
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: reynolds_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: visc_stress
-        type(scalar_field), dimension(num_dims, num_dims), intent(inout) :: eff_visc
+        type(scalar_field), dimension(6), intent(inout) :: reynolds_stress
+        type(scalar_field), dimension(6), intent(inout) :: visc_stress
+        type(scalar_field), dimension(6), intent(inout) :: eff_visc
         type(scalar_field), dimension(num_dims), intent(inout) :: int_mom_exch
-        integer :: i, j, k, l, q
+        integer :: i, j, k, l, q, idx1, idx2, idx3
 
         ! cons vars: X fwd FFT, Y fwd FFT
         do l = 1, sys_size
@@ -1144,118 +1122,128 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         ! reynolds stress: X fwd FFT, Y fwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 0, m
-                    do j = 0, n
-                        do k = 0, p
-                            data_real_3D_slabz(i + 1, j + 1, k + 1) = reynolds_stress(l, q)%sf(i, j, k)*fluid_indicator_function%sf(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, Nx
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, data_cmplx_out1d)
-#else
-                call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
-#else
-                call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_slabz_batch(reynolds_stress_idx + 3*(l - 1) + q, i, j, k) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-            end do
-        end do
-
-        ! effective viscosity: X fwd FFT, Y fwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 0, m
-                    do j = 0, n
-                        do k = 0, p
-                            data_real_3D_slabz(i + 1, j + 1, k + 1) = visc_stress(l, q)%sf(i, j, k)*fluid_indicator_function%sf(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, Nx
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, data_cmplx_out1d)
-#else
-                call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
-#else
-                call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_slabz_batch(eff_visc_idx + 3*(l - 1) + q, i, j, k) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-            end do
-        end do
-
-        ! interphase momentum exchange: X fwd FFT, Y fwd FFT
-        do l = 1, num_dims
+        do l = 1, 6
             $:GPU_PARALLEL_LOOP(collapse=3)
             do i = 0, m
                 do j = 0, n
                     do k = 0, p
-                        data_real_3D_slabz(i + 1, j + 1, k + 1) = pres_visc_stress(l, 1)%sf(i, j, k)*grad_fluid_indicator(1)%sf(i, j, k) &
-                                                                  + pres_visc_stress(l, 2)%sf(i, j, k)*grad_fluid_indicator(2)%sf(i, j, k) &
-                                                                  + pres_visc_stress(l, 3)%sf(i, j, k)*grad_fluid_indicator(3)%sf(i, j, k)
+                        data_real_3D_slabz(i + 1, j + 1, k + 1) = reynolds_stress(l)%sf(i, j, k)*fluid_indicator_function%sf(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, Nx
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, data_cmplx_out1d)
+#else
+            call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
+#else
+            call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_slabz_batch(reynolds_stress_idx + l, i, j, k) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+        end do
+
+        ! effective viscosity: X fwd FFT, Y fwd FFT
+        do l = 1, 6
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        data_real_3D_slabz(i + 1, j + 1, k + 1) = visc_stress(l)%sf(i, j, k)*fluid_indicator_function%sf(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, Nx
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny) = data_real_3D_slabz(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecD2Z(plan_x_fwd_gpu, data_real_in1d, data_cmplx_out1d)
+#else
+            call fftw_execute_dft_r2c(plan_x_r2c_fwd, data_real_in1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_FORWARD)
+#else
+            call fftw_execute_dft(plan_y_c2c_fwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_slabz_batch(eff_visc_idx + l, i, j, k) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+        end do
+
+        ! interphase momentum exchange: X fwd FFT, Y fwd FFT
+        ! 1, 2, 3; 2, 4, 5; 3, 5, 6
+        do l = 1, num_dims
+            if (l == 1) then
+                idx1 = 1
+                idx2 = 2
+                idx3 = 3
+            else if (l == 2) then
+                idx1 = 2
+                idx2 = 4
+                idx3 = 5 
+            else if (l == 3) then
+                idx1 = 3
+                idx2 = 5
+                idx3 = 6
+            end if
+            $:GPU_PARALLEL_LOOP(collapse=3, copyin='[idx1, idx2, idx3]')
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        data_real_3D_slabz(i + 1, j + 1, k + 1) = pres_visc_stress(idx1)%sf(i, j, k)*grad_fluid_indicator(1)%sf(i, j, k) &
+                                                                + pres_visc_stress(idx2)%sf(i, j, k)*grad_fluid_indicator(2)%sf(i, j, k) &
+                                                                + pres_visc_stress(idx3)%sf(i, j, k)*grad_fluid_indicator(3)%sf(i, j, k)
                     end do
                 end do
             end do
@@ -1382,89 +1370,85 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         ! reynolds stress: Z fwd FFT, convolution, Z bwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_slaby_batch(reynolds_stress_idx + 3*(l - 1) + q, i, j, k)
-                        end do
+        do l = 1, 6
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_slaby_batch(reynolds_stress_idx + l, i, j, k)
                     end do
                 end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_FORWARD)
-#else
-                call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)*cmplx_kernelG1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_INVERSE)
-#else
-                call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_slaby_batch(reynolds_stress_idx + 3*(l - 1) + q, i, j, k) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
             end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_FORWARD)
+#else
+            call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)*cmplx_kernelG1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_INVERSE)
+#else
+            call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_slaby_batch(reynolds_stress_idx + l, i, j, k) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
         end do
 
         ! effective viscosity: Z fwd FFT, convolution, Z bwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_slaby_batch(eff_visc_idx + 3*(l - 1) + q, i, j, k)
-                        end do
+        do l = 1, 6
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_slaby_batch(eff_visc_idx + l, i, j, k)
                     end do
                 end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_FORWARD)
-#else
-                call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)*cmplx_kernelG1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_INVERSE)
-#else
-                call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Nyloc
-                        do k = 1, Nz
-                            data_cmplx_slaby_batch(eff_visc_idx + 3*(l - 1) + q, i, j, k) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
             end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_FORWARD)
+#else
+            call fftw_execute_dft(plan_z_c2c_fwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)*cmplx_kernelG1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_z_gpu, data_cmplx_out1d, data_cmplx_out1d, CUFFT_INVERSE)
+#else
+            call fftw_execute_dft(plan_z_c2c_bwd, data_cmplx_out1d, data_cmplx_out1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Nyloc
+                    do k = 1, Nz
+                        data_cmplx_slaby_batch(eff_visc_idx + l, i, j, k) = data_cmplx_out1d(k + (i - 1)*Nz + (j - 1)*Nz*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
         end do
 
         ! interphase momentum exchange: Z fwd FFT, convolution, Z bwd FFT
@@ -1609,107 +1593,103 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         ! reynolds stress: Y bwd FFT, X bwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_slabz_batch(reynolds_stress_idx + 3*(l - 1) + q, i, j, k)
-                        end do
+        do l = 1, 6
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_slabz_batch(reynolds_stress_idx + l, i, j, k)
                     end do
                 end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_INVERSE)
-#else
-                call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2D(plan_x_bwd_gpu, data_cmplx_out1d, data_real_in1d)
-#else
-                call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, Nx
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_real_3D_slabz(i, j, k) = data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 0, m
-                    do j = 0, n
-                        do k = 0, p
-                            reynolds_stress(l, q)%sf(i, j, k) = data_real_3D_slabz(i + 1, j + 1, k + 1)*fft_norm/filtered_fluid_indicator_function%sf(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
             end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_INVERSE)
+#else
+            call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2D(plan_x_bwd_gpu, data_cmplx_out1d, data_real_in1d)
+#else
+            call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, Nx
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_real_3D_slabz(i, j, k) = data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        reynolds_stress(l)%sf(i, j, k) = data_real_3D_slabz(i + 1, j + 1, k + 1)*fft_norm/filtered_fluid_indicator_function%sf(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
         end do
 
         ! effective viscosity: Y bwd FFT, X bwd FFT
-        do l = 1, num_dims
-            do q = 1, num_dims
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_slabz_batch(eff_visc_idx + 3*(l - 1) + q, i, j, k)
-                        end do
+        do l = 1, 6
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC) = data_cmplx_slabz_batch(eff_visc_idx + l, i, j, k)
                     end do
                 end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_INVERSE)
-#else
-                call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, NxC
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-#if defined(MFC_OpenACC)
-                ierr = cufftExecZ2D(plan_x_bwd_gpu, data_cmplx_out1d, data_real_in1d)
-#else
-                call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
-#endif
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 1, Nx
-                    do j = 1, Ny
-                        do k = 1, Nzloc
-                            data_real_3D_slabz(i, j, k) = data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-                $:GPU_PARALLEL_LOOP(collapse=3)
-                do i = 0, m
-                    do j = 0, n
-                        do k = 0, p
-                            eff_visc(l, q)%sf(i, j, k) = data_real_3D_slabz(i + 1, j + 1, k + 1)*fft_norm/filtered_fluid_indicator_function%sf(i, j, k)
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
             end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2Z(plan_y_gpu, data_cmplx_out1dy, data_cmplx_out1dy, CUFFT_INVERSE)
+#else
+            call fftw_execute_dft(plan_y_c2c_bwd, data_cmplx_out1dy, data_cmplx_out1dy)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, NxC
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_cmplx_out1d(i + (j - 1)*NxC + (k - 1)*NxC*Ny) = data_cmplx_out1dy(j + (i - 1)*Ny + (k - 1)*Ny*NxC)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+#if defined(MFC_OpenACC)
+            ierr = cufftExecZ2D(plan_x_bwd_gpu, data_cmplx_out1d, data_real_in1d)
+#else
+            call fftw_execute_dft_c2r(plan_x_c2r_bwd, data_cmplx_out1d, data_real_in1d)
+#endif
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 1, Nx
+                do j = 1, Ny
+                    do k = 1, Nzloc
+                        data_real_3D_slabz(i, j, k) = data_real_in1d(i + (j - 1)*Nx + (k - 1)*Nx*Ny)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+            $:GPU_PARALLEL_LOOP(collapse=3)
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        eff_visc(l)%sf(i, j, k) = data_real_3D_slabz(i + 1, j + 1, k + 1)*fft_norm/filtered_fluid_indicator_function%sf(i, j, k)
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
         end do
 
         ! interphase momentum exchange: Y bwd FFT, X bwd FFT
@@ -1939,17 +1919,13 @@ contains
 
         @:DEALLOCATE(filtered_pressure%sf)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:DEALLOCATE(visc_stress(i, j)%sf)
-            end do
+        do i = 1, 6
+            @:DEALLOCATE(visc_stress(i)%sf)
         end do
         @:DEALLOCATE(visc_stress)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:DEALLOCATE(pres_visc_stress(i, j)%sf)
-            end do
+        do i = 1, 6
+            @:DEALLOCATE(pres_visc_stress(i)%sf)
         end do
         @:DEALLOCATE(pres_visc_stress)
 
@@ -1958,17 +1934,13 @@ contains
         end do
         @:DEALLOCATE(div_pres_visc_stress)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:DEALLOCATE(reynolds_stress(i, j)%sf)
-            end do
+        do i = 1, 6
+            @:DEALLOCATE(reynolds_stress(i)%sf)
         end do
         @:DEALLOCATE(reynolds_stress)
 
-        do i = 1, num_dims
-            do j = 1, num_dims
-                @:DEALLOCATE(eff_visc(i, j)%sf)
-            end do
+        do i = 1, 6
+            @:DEALLOCATE(eff_visc(i)%sf)
         end do
         @:DEALLOCATE(eff_visc)
 
