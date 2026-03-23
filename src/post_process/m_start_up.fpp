@@ -377,7 +377,6 @@ contains
 
         ! Adding filtered quantities
         if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
-            print *, 'WRITING FILTERED DATA'
             ! filtered fluid indicator
             q_sf = filtered_fluid_indicator_function%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
             write (varname, '(A)') 'filtered_fluid_indicator_function'

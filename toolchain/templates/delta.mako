@@ -38,6 +38,7 @@ echo
 
 % if gpu_enabled:
     export MPICH_GPU_SUPPORT_ENABLED=0 # Disable GPU-Direct MPI
+    export FI_CXI_SAFE_DEVMEM_COPY_THRESHOLD=0
 % endif
 
 % for target in targets:

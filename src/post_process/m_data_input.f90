@@ -528,10 +528,6 @@ contains
 
         call s_read_parallel_conservative_data(t_step, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
 
-        if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
-            call s_read_parallel_filtered_data(t_step, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
-        end if
-
         deallocate (x_cb_glb, y_cb_glb, z_cb_glb)
 
         if (bc_io) then
@@ -562,6 +558,13 @@ contains
         logical :: file_exist
         character(len=10) :: t_step_string
         integer :: i
+        integer :: alt_sys
+
+        if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+            alt_sys = sys_size + volume_filter_dt%stat_size
+        else
+            alt_sys = sys_size
+        end if
 
         if (file_per_process) then
             call s_int_to_str(t_step, t_step_string)
@@ -640,8 +643,14 @@ contains
 
                 call s_setup_mpi_io_params(data_size, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
 
+                if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+                    call s_initialize_mpi_data_filtered(filtered_fluid_indicator_function, &
+                                                        stat_q_cons_filtered, stat_filtered_pressure, &
+                                                        stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
+                end if
+
                 ! Read the data for each variable
-                do i = 1, sys_size
+                do i = 1, alt_sys
                     var_MOK = int(i, MPI_OFFSET_KIND)
 
                     ! Initial displacement to skip at beginning of file
@@ -662,76 +671,6 @@ contains
             end if
         end if
     end subroutine s_read_parallel_conservative_data
-#endif
-
-#ifdef MFC_MPI
-    !> Helper subroutine to read parallel volume filtered data
-    !!  @param t_step Current time-step
-    !!  @param m_MOK, n_MOK, p_MOK MPI offset kinds for dimensions
-    !!  @param WP_MOK, MOK, str_MOK, NVARS_MOK Other MPI offset kinds
-    impure subroutine s_read_parallel_filtered_data(t_step, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
-
-        integer, intent(in) :: t_step
-        integer(KIND=MPI_OFFSET_KIND), intent(inout) :: m_MOK, n_MOK, p_MOK
-        integer(KIND=MPI_OFFSET_KIND), intent(inout) :: WP_MOK, MOK, str_MOK, NVARS_MOK
-
-        integer :: ifile, ierr, data_size
-        integer, dimension(MPI_STATUS_SIZE) :: status
-        integer(KIND=MPI_OFFSET_KIND) :: disp, var_MOK
-        character(LEN=path_len + 2*name_len) :: file_loc
-        logical :: file_exist
-        character(len=10) :: t_step_string
-        integer :: alt_sys
-        integer :: i
-
-        alt_sys = sys_size + volume_filter_dt%stat_size ! filtered indicator, stats of: R_u, R_mu, F_imet, q_cons_filtered, pressure
-
-        print *, 'READING FILTERED DATA', alt_sys
-
-        ! Open the file to read volume filtered variables
-        write (file_loc, '(I0,A)') t_step, '.dat'
-        file_loc = trim(case_dir)//'/restart_data'//trim(mpiiofs)//trim(file_loc)
-        inquire (FILE=trim(file_loc), EXIST=file_exist)
-
-        if (file_exist) then
-            call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
-
-            call s_initialize_mpi_data_filtered(filtered_fluid_indicator_function, &
-                                                stat_q_cons_filtered, stat_filtered_pressure, &
-                                                stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
-
-            ! Size of local arrays
-            data_size = (m + 1)*(n + 1)*(p + 1)
-
-            ! Resize some integers so MPI can read even the biggest file
-            m_MOK = int(m_glb + 1, MPI_OFFSET_KIND)
-            n_MOK = int(n_glb + 1, MPI_OFFSET_KIND)
-            p_MOK = int(p_glb + 1, MPI_OFFSET_KIND)
-            WP_MOK = int(8._wp, MPI_OFFSET_KIND)
-            MOK = int(1._wp, MPI_OFFSET_KIND)
-            str_MOK = int(name_len, MPI_OFFSET_KIND)
-            NVARS_MOK = int(alt_sys, MPI_OFFSET_KIND)
-
-            ! Read the data for each variable
-            do i = sys_size + 1, alt_sys
-                var_MOK = int(i, MPI_OFFSET_KIND)
-
-                ! Initial displacement to skip at beginning of file
-                disp = m_MOK*max(MOK, n_MOK)*max(MOK, p_MOK)*WP_MOK*(var_MOK - 1)
-
-                call MPI_FILE_SET_VIEW(ifile, disp, mpi_p, MPI_IO_DATA%view(i), &
-                                       'native', mpi_info_int, ierr)
-                call MPI_FILE_READ_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size*mpi_io_type, &
-                                       mpi_io_p, status, ierr)
-            end do
-
-            call s_mpi_barrier()
-            call MPI_FILE_CLOSE(ifile, ierr)
-        else
-            call s_mpi_abort('File '//trim(file_loc)//' is missing. Exiting.')
-        end if
-
-    end subroutine s_read_parallel_filtered_data
 #endif
 
     !>  Computation of parameters, allocation procedures, and/or

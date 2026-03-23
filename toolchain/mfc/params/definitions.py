@@ -995,7 +995,7 @@ def _load():  # pylint: disable=too-many-locals,too-many-statements
     # new
     for n in ["periodic_forcing", "volume_filter_momentum_eqn", 
               "compute_particle_drag", "slab_domain_decomposition",
-              "q_filtered_wrt"]:
+              "q_filtered_wrt", "forcing_wrt"]:
         _r(n, LOG)
     for n in ["mom_f_idx", "forcing_window", "t_step_start_stats"]:
         _r(n, INT)
