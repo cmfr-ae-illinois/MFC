@@ -27,7 +27,7 @@ module m_additional_forcing
     $:GPU_DECLARE(create='[spatial_rho, spatial_u, spatial_eps, phase_rho, phase_u, phase_eps]')
 
     ! control params
-    real(wp), allocatable, dimension(:) :: u_series
+    real(wp), allocatable, dimension(:) :: err_u_hist
     real(wp) :: integral_u, integral_M
     real(wp), allocatable, dimension(:) :: rho_wdw_cntrl, u_wdw_cntrl, cs_wdw_cntrl, Vp_wdw_cntrl
     real(wp) :: rho_sum_cntrl, u_sum_cntrl, cs_sum_cntrl, Vp_sum_cntrl
@@ -78,8 +78,8 @@ contains
         ! controls
         integral_u = 0._wp
         integral_M = 0._wp
-        @:ALLOCATE(u_series(3))
-        u_series = 0._wp
+        @:ALLOCATE(err_u_hist(4))
+        err_u_hist = 0._wp
 
         @:ALLOCATE(rho_wdw_cntrl(cntrl_p%window_size))
         @:ALLOCATE(u_wdw_cntrl(cntrl_p%window_size))
@@ -230,7 +230,7 @@ contains
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
         real(wp) :: Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc, rho, dVol, rho_avg, rhou_avg, u_avg, cs_avg, pres
         real(wp) :: mu, Dp, u_star_rel, gamma, Mach, u_rel
-        real(wp) :: err_u, err_M, deriv_u
+        real(wp) :: err_u, err_M, d_err_u
         integer :: window_loc
         integer :: i, j, k, l
 
@@ -299,10 +299,10 @@ contains
 
         if (wdw_fill_cntrl < cntrl_p%window_size) wdw_fill_cntrl = wdw_fill_cntrl + 1
 
-        rho_avg = rho_sum_cntrl / real(wdw_fill_cntrl, wp)
-        u_avg = u_sum_cntrl / real(wdw_fill_cntrl, wp)
-        cs_avg = cs_sum_cntrl / real(wdw_fill_cntrl, wp)
-        Vp_avg = Vp_sum_cntrl / real(wdw_fill_cntrl, wp)
+        rho_avg = rho_sum_cntrl/real(wdw_fill_cntrl, wp)
+        u_avg = u_sum_cntrl/real(wdw_fill_cntrl, wp)
+        cs_avg = cs_sum_cntrl/real(wdw_fill_cntrl, wp)
+        Vp_avg = Vp_sum_cntrl/real(wdw_fill_cntrl, wp)
         ! done time averaging
 
         u_rel = u_avg - Vp_avg
@@ -316,21 +316,24 @@ contains
         integral_u = integral_u + (dt*err_u)
         integral_M = integral_M + (dt*err_M)
 
-        u_series(1) = u_series(2)
-        u_series(2) = u_series(3)
-        u_series(3) = u_rel
-        if (t_step > 2) then
-            deriv_u = (1.5_wp * u_series(3) - 2._wp * u_series(2) + 0.5_wp * u_series(1)) / dt
-        else 
-            deriv_u = 0._wp
+        err_u_hist(1) = err_u_hist(2)
+        err_u_hist(2) = err_u_hist(3)
+        err_u_hist(3) = err_u_hist(4)
+        err_u_hist(4) = err_u
+        if (t_step > 3) then
+            !d_err_u = (err_u_hist(2) - err_u_hist(1))/dt
+            !d_err_u = (1.5_wp*err_u_hist(3) - 2._wp*err_u_hist(2) + 0.5_wp*err_u_hist(1))/dt
+            d_err_u = (11._wp*err_u_hist(4) - 18._wp*err_u_hist(3) + 9._wp*err_u_hist(2) - 2._wp*err_u_hist(1))/(6._wp*dt)
+        else
+            d_err_u = 0._wp
         end if
 
-        g_y = g_y + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*deriv_u
-        P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M 
+        particle_bf = particle_bf + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*d_err_u
+        P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, 'CONTROL:', g_y, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
-            write (103) g_y, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
+            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, d_err_u
+            write (103) particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
             flush (103)
         end if
 

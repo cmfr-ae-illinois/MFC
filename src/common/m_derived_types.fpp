@@ -530,8 +530,8 @@ module m_derived_types
         real(wp) :: tau_p
         real(wp) :: K_Pg
         real(wp) :: K_Dg
-        real(wp) :: K_Pp  
-        integer  :: window_size
+        real(wp) :: K_Pp
+        integer :: window_size
     end type control_params
 
 end module m_derived_types

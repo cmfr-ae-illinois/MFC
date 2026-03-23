@@ -556,6 +556,8 @@ module m_global_parameters
     real(wp) :: rho_inf_ref !< reference freestream density
     real(wp) :: P_inf_ref !< reference freestream temperature
     logical :: periodic_forcing
+    logical :: particle_control
+    real(wp) :: particle_bf
     integer :: mom_f_idx
     integer :: forcing_window
     real(wp) :: forcing_dt
@@ -567,7 +569,7 @@ module m_global_parameters
     real(wp) :: filter_width
     logical :: q_filtered_wrt
 
-    $:GPU_DECLARE(create='[u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, fluid_volume_fraction, filter_width]')
+    $:GPU_DECLARE(create='[u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, fluid_volume_fraction, filter_width, particle_bf]')
     !> @name MHD Hyperbolic cleaning parameters
     !> @{!
     real(wp) :: hyper_cleaning_speed    !< Hyperbolic cleaning wave speed (c_h)
@@ -881,6 +883,8 @@ contains
         rho_inf_ref = dflt_real
         P_inf_ref = dflt_real
         periodic_forcing = .false.
+        particle_control = .false.
+        particle_bf = dflt_real
         mom_f_idx = dflt_int
         forcing_window = dflt_int
         forcing_dt = dflt_real

@@ -85,7 +85,7 @@ contains
         call MPI_BCAST(case_dir, len(case_dir), MPI_CHARACTER, 0, MPI_COMM_WORLD, ierr)
 
         #:for VAR in ['k_x', 'k_y', 'k_z', 'w_x', 'w_y', 'w_z', 'p_x', 'p_y', &
-            & 'p_z', 'g_x', 'g_y', 'g_z']
+            & 'p_z', 'g_x', 'g_y', 'g_z', 'particle_bf']
             call MPI_BCAST(${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -114,7 +114,7 @@ contains
             & 'cfl_adap_dt', 'cfl_const_dt', 'cfl_dt', 'surface_tension',       &
             & 'shear_stress', 'bulk_stress', 'bubbles_lagrange',                &
             & 'hyperelasticity', 'down_sample', 'int_comp','fft_wrt',           &
-            & 'compute_particle_drag', 'periodic_forcing',                      &
+            & 'compute_particle_drag', 'periodic_forcing', 'particle_control',  &
             & 'forcing_wrt', 'volume_filter_momentum_eqn',                      &
             & 'slab_domain_decomposition', 'q_filtered_wrt', 'hyper_cleaning' ]
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)

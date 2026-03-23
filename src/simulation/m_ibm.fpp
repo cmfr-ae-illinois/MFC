@@ -1132,6 +1132,12 @@ contains
             end if
         end do
 
+        if (particle_control) then
+            do i = 1, num_ibs
+                forces(i, mom_f_idx) = forces(i, mom_f_idx) + particle_bf*patch_ib(i)%mass
+            end do
+        end if
+
         ! apply the summed forces
         do i = 1, num_ibs
             patch_ib(i)%force(:) = forces(i, :)

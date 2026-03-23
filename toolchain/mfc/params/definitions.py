@@ -995,12 +995,12 @@ def _load():  # pylint: disable=too-many-locals,too-many-statements
     # new
     for n in ["periodic_forcing", "volume_filter_momentum_eqn",
               "compute_particle_drag", "slab_domain_decomposition",
-              "q_filtered_wrt", "forcing_wrt"]:
+              "q_filtered_wrt", "forcing_wrt", "particle_control"]:
         _r(n, LOG)
     for n in ["mom_f_idx", "forcing_window", "t_step_start_stats"]:
         _r(n, INT)
     for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt",
-              "fluid_volume_fraction", "filter_width"]:
+              "fluid_volume_fraction", "filter_width", "particle_bf"]:
         _r(n, REAL)
     for n in ["Re_tgt", "M_tgt", "tau_p", "K_Pg", "K_Dg", "K_Pp"]:
         _r(f"cntrl_p%{n}", REAL)
