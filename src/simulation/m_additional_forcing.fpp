@@ -28,7 +28,6 @@ module m_additional_forcing
 
     ! control params
     real(wp), allocatable, dimension(:) :: err_u_hist
-    real(wp) :: integral_u, integral_M
     real(wp), allocatable, dimension(:) :: rho_wdw_cntrl, u_wdw_cntrl, cs_wdw_cntrl, Vp_wdw_cntrl
     real(wp) :: rho_sum_cntrl, u_sum_cntrl, cs_sum_cntrl, Vp_sum_cntrl
     integer :: wdw_fill_cntrl
@@ -76,8 +75,6 @@ contains
         end if
 
         ! controls
-        integral_u = 0._wp
-        integral_M = 0._wp
         @:ALLOCATE(err_u_hist(4))
         err_u_hist = 0._wp
 
@@ -312,9 +309,6 @@ contains
 
         err_u = u_star_rel - u_rel
         err_M = cntrl_p%M_tgt - Mach
-
-        integral_u = integral_u + (dt*err_u)
-        integral_M = integral_M + (dt*err_M)
 
         err_u_hist(1) = err_u_hist(2)
         err_u_hist(2) = err_u_hist(3)
