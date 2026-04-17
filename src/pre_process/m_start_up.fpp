@@ -84,7 +84,7 @@ contains
             & ptgalpha_eps, ib, num_ibs, patch_ib, sigma, adv_n, cfl_adap_dt, cfl_const_dt, n_start, n_start_old, &
             & surface_tension, hyperelasticity, pre_stress, elliptic_smoothing, elliptic_smoothing_iters, viscous, &
             & bubbles_lagrange, num_bc_patches, patch_bc, Bx0, relativity, cont_damage, igr, igr_order, down_sample, recon_type, &
-            & muscl_order, hyper_cleaning, simplex_perturb, simplex_params, fft_wrt, slab_domain_decomposition
+            & muscl_order, hyper_cleaning, simplex_perturb, simplex_params, fft_wrt
 
         file_loc = 'pre_process.inp'
         inquire (FILE=trim(file_loc), EXIST=file_check)
@@ -529,8 +529,6 @@ contains
                 call s_check_grid_data_files()
             end if
         end if
-
-        call s_mpi_global_domain_bounds()
 
     end subroutine s_read_grid
 

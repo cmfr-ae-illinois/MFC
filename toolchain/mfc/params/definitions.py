@@ -1067,21 +1067,6 @@ def _load():
         _r(f"p_{d}", REAL, math=r"\f$\phi_" + d + r"\f$")
         _r(f"bf_{d}", LOG)
 
-    # new
-    for n in ["periodic_forcing", "volume_filter_momentum_eqn",
-              "compute_particle_drag", "slab_domain_decomposition",
-              "q_filtered_wrt", "forcing_wrt", "particle_control"]:
-        _r(n, LOG)
-    for n in ["mom_f_idx", "forcing_window", "t_step_start_stats"]:
-        _r(n, INT)
-    for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt",
-              "fluid_volume_fraction", "filter_width", "particle_bf"]:
-        _r(n, REAL)
-    for n in ["Re_tgt", "M_tgt", "tau_p", "K_Pg", "K_Dg", "K_Pp"]:
-        _r(f"cntrl_p%{n}", REAL)
-    _r("cntrl_p%window_size", INT)
-
-    # ==========================================================================
     # INDEXED PARAMETERS
 
     # patch_icpp (10 patches)
@@ -1320,6 +1305,21 @@ def _load():
     for f in range(1, NF + 1):
         _r(f"fluid_rho({f})", REAL)
 
+    # periodic forcing
+    for n in ["periodic_forcing", "forcing_wrt"]:
+        _r(n, LOG)
+    for n in ["mom_f_idx", "forcing_window"]:
+        _r(n, INT)
+    for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt", "fluid_volume_fraction"]:
+        _r(n, REAL)
+
+    # particle control
+    for n in ["particle_control"]:
+        _r(n, LOG)
+    for n in ["Re_tgt", "M_tgt", "K_Pg", "K_Dg", "K_Pp"]:
+        _r(f"cntrl_p%{n}", REAL)
+    _r("particle_bf", REAL)
+    _r("cntrl_p%window_size", INT)
 
 # Load definitions when module imported and freeze registry
 def _init_registry():

@@ -70,7 +70,7 @@ contains
             & bubbles_lagrange, sim_data, hyperelasticity, Bx0, relativity, cont_damage, hyper_cleaning, num_bc_patches, igr, &
             & igr_order, down_sample, recon_type, muscl_order, lag_header, lag_txt_wrt, lag_db_wrt, lag_id_wrt, lag_pos_wrt, &
             & lag_pos_prev_wrt, lag_vel_wrt, lag_rad_wrt, lag_rvel_wrt, lag_r0_wrt, lag_rmax_wrt, lag_rmin_wrt, lag_dphidt_wrt, &
-            & lag_pres_wrt, lag_mv_wrt, lag_mg_wrt, lag_betaT_wrt, lag_betaC_wrt, alpha_rho_e_wrt, ib_state_wrt, q_filtered_wrt, slab_domain_decomposition
+            & lag_pres_wrt, lag_mv_wrt, lag_mg_wrt, lag_betaT_wrt, lag_betaC_wrt, alpha_rho_e_wrt, ib_state_wrt
 
         file_loc = 'post_process.inp'
         inquire (FILE=trim(file_loc), EXIST=file_check)
@@ -296,66 +296,6 @@ contains
             end if
         end do
 
-        ! Adding filtered quantities
-        if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
-            ! filtered fluid indicator
-            q_sf = filtered_fluid_indicator_function%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-            write (varname, '(A)') 'filtered_fluid_indicator_function'
-            call s_write_variable_to_formatted_database_file(varname, t_step)
-
-            varname(:) = ' '
-
-            ! filtered vars stats
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        q_sf = stat_reynolds_stress(i, j)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                        write (varname, '(A,I0,A,I0,A,I0)') 'stat_reynolds_stress', i, '_', j, '_m', k
-                        call s_write_variable_to_formatted_database_file(varname, t_step)
-
-                        varname(:) = ' '
-                    end do
-                end do
-            end do
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        q_sf = stat_eff_visc(i, j)%vf(k)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                        write (varname, '(A,I0,A,I0,A,I0)') 'stat_eff_visc', i, '_', j, '_m', k
-                        call s_write_variable_to_formatted_database_file(varname, t_step)
-
-                        varname(:) = ' '
-                    end do
-                end do
-            end do
-            do i = 1, num_dims
-                do j = 1, 4
-                    q_sf = stat_int_mom_exch(i)%vf(j)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                    write (varname, '(A,I0,A,I0)') 'stat_int_mom_exch', i, '_m', j
-                    call s_write_variable_to_formatted_database_file(varname, t_step)
-
-                    varname(:) = ' '
-                end do
-            end do
-            do i = 1, E_idx
-                do j = 1, 4
-                    q_sf = stat_q_cons_filtered(i)%vf(j)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                    write (varname, '(A,I0,A,I0)') 'stat_q_cons_filtered', i, '_m', j
-                    call s_write_variable_to_formatted_database_file(varname, t_step)
-
-                    varname(:) = ' '
-                end do
-            end do
-            do i = 1, 4
-                q_sf = stat_filtered_pressure(i)%sf(x_beg:x_end, y_beg:y_end, z_beg:z_end)
-                write (varname, '(A,I0)') 'stat_filtered_pressure_m', i
-                call s_write_variable_to_formatted_database_file(varname, t_step)
-
-                varname(:) = ' '
-            end do
-        end if
-
-        ! Adding the species' concentrations to the formatted database file
         if (chemistry) then
             do i = 1, num_species
                 if (chem_wrt_Y(i) .or. prim_vars_wrt) then

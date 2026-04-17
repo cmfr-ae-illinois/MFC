@@ -64,7 +64,7 @@ contains
         call MPI_BCAST(case_dir, len(case_dir), MPI_CHARACTER, 0, MPI_COMM_WORLD, ierr)
 
         #:for VAR in ['k_x', 'k_y', 'k_z', 'w_x', 'w_y', 'w_z', 'p_x', 'p_y', &
-            & 'p_z', 'g_x', 'g_y', 'g_z', 'particle_bf']
+            & 'p_z', 'g_x', 'g_y', 'g_z']
             call MPI_BCAST(${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -76,7 +76,7 @@ contains
             & 'num_probes', 'num_integrals', 'bubble_model', 'thermal',        &
             & 'num_source', 'relax_model', 'num_ibs', 'n_start',    &
             & 'num_bc_patches', 'num_igr_iters', 'num_igr_warm_start_iters', &
-            & 'adap_dt_max_iters', 'collision_model', 't_step_start_stats', 'mom_f_idx', 'forcing_window' ]
+            & 'adap_dt_max_iters', 'collision_model', 'mom_f_idx', 'forcing_window' ]
             call MPI_BCAST(${VAR}$, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -93,9 +93,8 @@ contains
             & 'cfl_adap_dt', 'cfl_const_dt', 'cfl_dt', 'surface_tension',       &
             & 'shear_stress', 'bulk_stress', 'bubbles_lagrange',                &
             & 'hyperelasticity', 'down_sample', 'int_comp','fft_wrt', &
-            & 'hyper_cleaning', 'ib_state_wrt', 'compute_particle_drag', 'periodic_forcing', 'particle_control',  &
-            & 'forcing_wrt', 'volume_filter_momentum_eqn',                      &
-            & 'slab_domain_decomposition', 'q_filtered_wrt']
+            & 'hyper_cleaning', 'ib_state_wrt', 'periodic_forcing', 'particle_control', &
+            & 'forcing_wrt']
             call MPI_BCAST(${VAR}$, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -136,8 +135,8 @@ contains
             & 'tau_star', 'cont_damage_s', 'alpha_bar', 'adap_dt_tol', &
             & 'ic_eps', 'ic_beta', 'hyper_cleaning_speed', &
             & 'hyper_cleaning_tau', 'coefficient_of_restitution', 'collision_time', &
-            & 'ib_coefficient_of_friction', 'u_inf_ref', 'rho_inf_ref', 'P_inf_ref',      &
-            & 'filter_width', 'forcing_dt', 'fluid_volume_fraction' ]
+            & 'ib_coefficient_of_friction', 'u_inf_ref', 'rho_inf_ref', 'P_inf_ref',&
+            & 'forcing_dt', 'fluid_volume_fraction', 'particle_bf' ]
             call MPI_BCAST(${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
         #:endfor
 
@@ -239,11 +238,10 @@ contains
         call MPI_BCAST(nv_uvm_pref_gpu, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
 
         ! control parameters
-        #:for VAR in [ 'Re_tgt', 'M_tgt', 'tau_p', 'K_Pg', 'K_Dg', 'K_Pp' ]
+        #:for VAR in [ 'Re_tgt', 'M_tgt', 'K_Pg', 'K_Dg', 'K_Pp' ]
             call MPI_BCAST(cntrl_p%${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
         #:endfor
         call MPI_BCAST(cntrl_p%window_size, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
-
 #endif
 
     end subroutine s_mpi_bcast_user_inputs

@@ -25,11 +25,7 @@ module m_time_steppers
     use m_nvtx
     use m_thermochem, only: num_species
     use m_body_forces
-
-    use m_volume_filtering
-
     use m_derived_variables
-
     use m_additional_forcing
 
     implicit none
@@ -574,14 +570,16 @@ contains
             end if
         end do
 
-        ! update body force and pressure_infty
-        call s_update_controllers(t_step, q_cons_ts(1)%vf)
-        
+        !
         if (ib) then
             if (moving_immersed_boundary_flag) call s_wrap_periodic_ibs()
             if (ib_state_wrt .and. (.not. moving_immersed_boundary_flag)) then
                 call s_compute_ib_forces(q_prim_vf, fluid_pp)
             end if
+        end if
+
+        if (particle_control) then  ! update body force and pressure_infty
+            call s_update_controllers(t_step, q_cons_ts(1)%vf)
         end if
 
         ! Adaptive dt: final stage

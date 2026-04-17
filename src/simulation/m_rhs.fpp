@@ -33,7 +33,6 @@ module m_rhs
     use m_chemistry
     use m_igr
     use m_pressure_relaxation
-
     use m_additional_forcing
 
     implicit none
@@ -849,7 +848,7 @@ contains
             call nvtxEndRange
         end if
 
-        ! END: Additional pphysics and source terms
+        ! END: Additional physics and source terms
 
         if (run_time_info .or. probe_wrt .or. ib .or. bubbles_lagrange) then
             if (.not. igr .or. dummy) then

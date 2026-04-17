@@ -46,12 +46,7 @@ module m_start_up
     use m_body_forces
     use m_sim_helpers
     use m_igr
-
     use m_additional_forcing
-
-    use m_volume_filtering
-
-    use m_compute_statistics
 
     implicit none
 
@@ -117,10 +112,9 @@ contains
             & g_y, g_z, n_start, t_save, t_stop, cfl_adap_dt, cfl_const_dt, cfl_target, surface_tension, bubbles_lagrange, &
             & lag_params, hyperelasticity, R0ref, num_bc_patches, Bx0, cont_damage, tau_star, cont_damage_s, alpha_bar, &
             & hyper_cleaning, hyper_cleaning_speed, hyper_cleaning_tau, alf_factor, num_igr_iters, num_igr_warm_start_iters, &
-            & int_comp, ic_eps, ic_beta, nv_uvm_out_of_core, nv_uvm_igr_temps_on_gpu, nv_uvm_pref_gpu, down_sample, fft_wrt, & 
-            & compute_particle_drag, u_inf_ref, rho_inf_ref, P_inf_ref, periodic_forcing, mom_f_idx, forcing_window, forcing_dt, forcing_wrt, &
-            & fluid_volume_fraction, volume_filter_momentum_eqn, slab_domain_decomposition, t_step_start_stats, &
-            & filter_width, q_filtered_wrt, cntrl_p, particle_control, particle_bf
+            & int_comp, ic_eps, ic_beta, nv_uvm_out_of_core, nv_uvm_igr_temps_on_gpu, nv_uvm_pref_gpu, down_sample, fft_wrt, &
+            & periodic_forcing, u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, forcing_wrt, &
+            & fluid_volume_fraction, particle_control, cntrl_p, particle_bf
 
         inquire (FILE=trim(file_path), EXIST=file_exist)
 
@@ -356,9 +350,6 @@ contains
         dx(0:m) = x_cb(0:m) - x_cb(-1:m - 1)
         x_cc(0:m) = x_cb(-1:m - 1) + dx(0:m)/2._wp
 
-        x_domain%beg = x_cb(-1)
-        x_domain%end = x_cb(m)
-
         if (ib) then
             do i = 1, num_ibs
                 if (patch_ib(i)%c > 0) then
@@ -385,9 +376,6 @@ contains
             y_cb(-1:n) = y_cb_glb((start_idx(2) - 1):(start_idx(2) + n))
             dy(0:n) = y_cb(0:n) - y_cb(-1:n - 1)
             y_cc(0:n) = y_cb(-1:n - 1) + dy(0:n)/2._wp
-
-            y_domain%beg = y_cb(-1)
-            y_domain%end = y_cb(n)
 
             if (p > 0) then
                 file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'z_cb.dat'
@@ -678,28 +666,6 @@ contains
             end do
         end if
 
-        ! Volume filter flow variables, compute unclosed terms and their statistics
-        if (volume_filter_momentum_eqn) then
-            if (t_step > t_step_start_stats) then
-                call nvtxStartRange("VOLUME-FILTER-MOMENTUM-EQUATION")
-                call s_volume_filter_momentum_eqn(q_cons_ts(1)%vf, q_prim_vf, q_T_sf, 1._wp/fluid_pp(1)%Re(1), bc_type)
-                call nvtxEndRange
-
-                call nvtxStartRange("COMPUTE-STATISTICS")
-                call s_compute_statistics_momentum_unclosed_terms(t_step, t_step_start_stats, reynolds_stress, eff_visc, int_mom_exch, q_cons_filtered, filtered_pressure)
-                call nvtxEndRange
-
-                ! Compute explicit x-, y-, z- forces on each particle
-                if (compute_particle_drag) then
-                    call nvtxStartRange("COMPUTE-PARTICLE-FORCES")
-                    call s_compute_particle_forces()
-                    call nvtxEndRange
-                end if
-            end if
-        end if
-
-        mytime = mytime + dt
-
         ! Total-variation-diminishing (TVD) Runge-Kutta (RK) time-steppers
         if (any(time_stepper == (/1, 2, 3/))) then
             call s_tvd_rk(t_step, time_avg, time_stepper)
@@ -809,30 +775,6 @@ contains
 
         call cpu_time(start)
         call nvtxStartRange("SAVE-DATA")
-        if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
-            $:GPU_UPDATE(host='[filtered_fluid_indicator_function%sf]')
-            do i = 1, num_dims
-                do j = 1, num_dims
-                    do k = 1, 4
-                        $:GPU_UPDATE(host='[stat_reynolds_stress(i, j)%vf(k)%sf]')
-                        $:GPU_UPDATE(host='[stat_eff_visc(i, j)%vf(k)%sf]')
-                    end do
-                end do
-            end do
-            do i = 1, num_dims
-                do j = 1, 4
-                    $:GPU_UPDATE(host='[stat_int_mom_exch(i)%vf(j)%sf]')
-                end do
-            end do
-            do i = 1, E_idx
-                do j = 1, 4
-                    $:GPU_UPDATE(host='[stat_q_cons_filtered(i)%vf(j)%sf]')
-                end do
-            end do
-            do i = 1, 4
-                $:GPU_UPDATE(host='[stat_filtered_pressure(i)%sf]')
-            end do
-        end if
         do i = 1, sys_size
 #ifndef FRONTIER_UNIFIED
             $:GPU_UPDATE(host='[q_cons_ts(stor)%vf(i)%sf]')
@@ -874,11 +816,6 @@ contains
             $:GPU_UPDATE(host='[Rmax_stats, Rmin_stats, gas_p, gas_mv, intfc_vel]')
             call s_write_restart_lag_bubbles(save_count)  ! parallel
             if (lag_params%write_bubbles_stats) call s_write_lag_bubble_stats()
-        else if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
-            call s_write_data_files(q_cons_ts(stor)%vf, q_T_sf, q_prim_vf, save_count, bc_type, &
-                                    filtered_fluid_indicator_function=filtered_fluid_indicator_function, &
-                                    stat_q_cons_filtered=stat_q_cons_filtered, stat_filtered_pressure=stat_filtered_pressure, &
-                                    stat_reynolds_stress=stat_reynolds_stress, stat_eff_visc=stat_eff_visc, stat_int_mom_exch=stat_int_mom_exch)
         else
             call s_write_data_files(q_cons_ts(stor)%vf, q_T_sf, q_prim_vf, save_count, bc_type)
         end if
@@ -976,9 +913,6 @@ contains
             call s_read_data_files(q_cons_ts(1)%vf)
         end if
 
-        call s_mpi_global_domain_bounds()
-
-        ! Populating the buffers of the grid variables using the boundary conditions
         call s_populate_grid_variables_buffers()
 
         if (model_eqns == 3) call s_initialize_internal_energy_equations(q_cons_ts(1)%vf)
@@ -1015,10 +949,6 @@ contains
         if (hyperelasticity) call s_initialize_hyperelastic_module()
 
         if (periodic_forcing) call s_initialize_additional_forcing_module()
-        if (volume_filter_momentum_eqn) then
-            call s_initialize_fftw_explicit_filter_module()
-            call s_initialize_statistics_module()
-        end if
 
     end subroutine s_initialize_modules
 
@@ -1154,9 +1084,6 @@ contains
         if (ib) then
             $:GPU_UPDATE(device='[ib_markers%sf]')
         end if
-
-        $:GPU_UPDATE(device='[u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, fluid_volume_fraction, filter_width]')
-
         #:if not MFC_CASE_OPTIMIZATION
             $:GPU_UPDATE(device='[igr, nb, igr_order]')
         #:endif
@@ -1207,13 +1134,10 @@ contains
         if (bodyForces) call s_finalize_body_forces_module()
         if (ib) call s_finalize_ibm_module()
 
-        if (periodic_forcing) call s_finalize_additional_forcing_module()
-        if (volume_filter_momentum_eqn) then
-            call s_finalize_fftw_explicit_filter_module()
-            call s_finalize_statistics_module()
+        if (periodic_forcing) then
+            call s_finalize_additional_forcing_module()
         end if
 
-        ! Terminating MPI execution environment
         call s_mpi_finalize()
 
     end subroutine s_finalize_modules

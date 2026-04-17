@@ -187,7 +187,6 @@ module m_global_parameters
     integer                                :: buff_size  !< Number of ghost cells for boundary condition storage
     logical                                :: fft_wrt
     logical                                :: dummy      !< AMDFlang workaround for case-optimization + GPU-kernel bug
-    logical :: slab_domain_decomposition
 
 contains
 
@@ -491,8 +490,6 @@ contains
         end do
 
         Bx0 = dflt_real
-
-        slab_domain_decomposition = .false.
 
         ! Subgrid bubble parameters
         bub_pp%R0ref = dflt_real; R0ref = dflt_real
