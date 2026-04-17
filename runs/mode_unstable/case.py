@@ -37,10 +37,10 @@ g0 = drag / mass_s
 fRe = CD * Re / 24.0
 tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
 
-Cg = 1.2; Cp = 1000.0
+Cg = 0.01; Cp = 1000.0
 
 K_Pg = -1.0/(Cg*tau_p)
-K_Dg = -0.55#-1.0/Cg
+K_Dg = 0#-0.55#-1.0/Cg
 K_Pp = -2.0*P/(Cp*M)
 
 #print('mu: ', mu)

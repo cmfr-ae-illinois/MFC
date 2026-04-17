@@ -134,7 +134,6 @@ case_dict = {
 
     # new case additions
     "periodic_forcing": "T",
-    "periodic_ibs": "T",
 
     "u_inf_ref": v1,
     "rho_inf_ref": rho,

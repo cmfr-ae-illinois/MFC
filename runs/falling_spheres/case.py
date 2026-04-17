@@ -182,7 +182,7 @@ case_dict = {
     "cntrl_p%K_Pg": K_Pg,
     "cntrl_p%K_Dg": K_Dg,
     "cntrl_p%K_Pp": K_Pp,
-    "cntrl_p%window_size": 1,
+    "cntrl_p%window_size": 5,
 
     }
 

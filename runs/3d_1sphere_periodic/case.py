@@ -135,7 +135,6 @@ case_dict = {
 
     # new case additions
     "periodic_forcing": "T",
-    "periodic_ibs": "T",
     #"compute_particle_drag_vi": "F",
     #"compute_particle_drag_si": "F",
     #"volume_filtering_momentum_eqn": "T",
@@ -144,7 +143,6 @@ case_dict = {
     "rho_inf_ref": rho,
     "T_inf_ref": T,
 
-    "store_levelset": "F",
     "slab_domain_decomposition": "T", 
     }
 
