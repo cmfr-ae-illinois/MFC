@@ -21,8 +21,8 @@ particle_vf = (N_s * vol_s) / (L**3)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 1.2
-Re = 500.0
+M = 1.4
+Re = 1500.0
 
 P = 101325
 rho = 1.225
@@ -48,9 +48,11 @@ K_Pp = -2.0*P/(Cp*M)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1.0E-06
-Nt = int(4 * L / v1 / dt)
-t_save = Nt//250
+dt = 2.0E-06
+Nt = int(8 * L / v1 / dt)
+t_save = Nt//400
+
+collision_time = 10.0 * dt
 
 Nx = 127
 Ny = Nx
@@ -61,7 +63,7 @@ ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
     f"patch_ib({1})%x_centroid": 0.0,
-    f"patch_ib({1})%y_centroid": -D,
+    f"patch_ib({1})%y_centroid": -2.5*D,
     f"patch_ib({1})%z_centroid": 0.0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
@@ -70,7 +72,7 @@ ib_dict.update({
 
     f"patch_ib({2})%geometry": 8,
     f"patch_ib({2})%x_centroid": 0.0,
-    f"patch_ib({2})%y_centroid": +D,
+    f"patch_ib({2})%y_centroid": +2.5*D,
     f"patch_ib({2})%z_centroid": 0.0,
     f"patch_ib({2})%radius": D / 2,
     f"patch_ib({2})%slip": "F",
@@ -119,11 +121,11 @@ case_dict = {
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
     "weno_order": 5,
-    "weno_eps": 1.0e-14,
+    "weno_eps": 1.0e-16,
     "weno_Re_flux": "T",
     "weno_avg": "T",
     "avg_state": 2,
-    "mapped_weno": "T",
+    "mapped_weno": "F",
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
@@ -189,6 +191,12 @@ case_dict = {
     "cntrl_p%K_Dg": K_Dg,
     "cntrl_p%K_Pp": K_Pp,
     "cntrl_p%window_size": 1,
+
+    # collisions
+    "collision_model": 1,  # soft-sphere collision model
+    "ib_coefficient_of_friction": 0.092,
+    "collision_time": collision_time,
+    "coefficient_of_restitution": 0.98,  # almost perfectly elastic
 
     }
 

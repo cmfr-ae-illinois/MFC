@@ -1096,6 +1096,8 @@ contains
             end block
         #:endif
 
+        $:GPU_UPDATE(device='[u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, fluid_volume_fraction, particle_bf]')
+
     end subroutine s_initialize_gpu_vars
 
     !> Finalize and deallocate all simulation sub-modules in reverse initialization order
