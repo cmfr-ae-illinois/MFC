@@ -329,7 +329,7 @@ contains
         P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, d_err_u
+            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, err_u, d_err_u
             write (103) particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
             flush (103)
         end if
