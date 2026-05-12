@@ -15,6 +15,7 @@ module m_start_up
     use m_variables_conversion
     use m_weno
     use m_muscl
+    use m_thinc
     use m_riemann_solvers
     use m_cbc
     use m_boundary_common
@@ -84,7 +85,7 @@ contains
 
         namelist /user_inputs/ case_dir, run_time_info, m, n, p, dt, &
             t_step_start, t_step_stop, t_step_save, t_step_print, &
-            model_eqns, mpp_lim, time_stepper, weno_eps, &
+            model_eqns, mpp_lim, time_stepper, weno_eps, muscl_eps, &
             rdma_mpi, teno_CT, mp_weno, weno_avg, &
             riemann_solver, low_Mach, wave_speeds, avg_state, &
             bc_x, bc_y, bc_z, &
@@ -177,7 +178,7 @@ contains
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         character(LEN=path_len + 2*name_len) :: t_step_dir  !< Relative path to the starting time-step directory
         character(LEN=path_len + 3*name_len) :: file_path   !< Relative path to the grid and conservative variables data files
-        logical :: file_exist
+        logical :: file_exist                               !< Logical used to check the existence of the input file
         integer :: i, r
 
         if (cfl_dt) then
@@ -683,7 +684,6 @@ contains
 
     !> Collect per-process wall-clock times and write aggregate performance metrics to file
     impure subroutine s_save_performance_metrics(time_avg, time_final, io_time_avg, io_time_final, proc_time, io_proc_time, &
-
         & file_exists)
 
         real(wp), intent(inout)               :: time_avg, time_final
@@ -821,7 +821,7 @@ contains
         end if
 
         ! Write IB kinematic state for restart
-        if (ib) call s_write_ib_state_file(t_step)
+        if (ib) call s_write_ib_state_file(save_count)
 
         call nvtxEndRange
         call cpu_time(finish)
@@ -917,9 +917,13 @@ contains
 
         if (model_eqns == 3) call s_initialize_internal_energy_equations(q_cons_ts(1)%vf)
         if (ib) then
-            if (t_step_start > 0) call s_read_ib_restart_data(t_step_start)
+            if (cfl_dt .and. n_start > 0) then
+                call s_read_ib_restart_data(n_start)
+            else if (t_step_start > 0) then
+                call s_read_ib_restart_data(t_step_start)
+            end if
             call s_ibm_setup()
-            if (t_step_start == 0) then
+            if (t_step_start == 0 .or. (cfl_dt .and. n_start == 0)) then
                 call s_write_ib_data_file(0)
                 call s_write_ib_state_file(0)
             end if
@@ -944,7 +948,7 @@ contains
             call s_initialize_cbc_module()
             call s_initialize_riemann_solvers_module()
         end if
-
+        if (int_comp > 0) call s_initialize_thinc_module()
         call s_initialize_derived_variables()
         if (bubbles_lagrange) call s_initialize_bubbles_EL_module(q_cons_ts(1)%vf)
 
@@ -1128,6 +1132,7 @@ contains
                 call s_finalize_muscl_module()
             end if
         end if
+        if (int_comp > 0) call s_finalize_thinc_module()
         call s_finalize_variables_conversion_module()
         if (grid_geometry == 3) call s_finalize_fftw_module
         call s_finalize_mpi_common_module()
