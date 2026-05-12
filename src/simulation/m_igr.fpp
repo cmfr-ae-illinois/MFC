@@ -276,7 +276,7 @@ contains
     !> @brief Iteratively solves the implicit gradient reconstruction system using Jacobi or Gauss-Seidel relaxation.
     subroutine s_igr_iterative_solve(q_cons_vf, bc_type, t_step)
 #ifdef _CRAYFTN
-        !DIR$ OPTIMIZE (-haggress)
+    !DIR$ OPTIMIZE (-haggress)
 #endif
         type(scalar_field), dimension(sys_size), intent(inout) :: q_cons_vf
         type(integer_field), dimension(1:num_dims, 1:2), intent(in) :: bc_type
@@ -378,7 +378,7 @@ contains
     !> @brief Computes the IGR viscous stress contribution in the x-direction and accumulates it into the RHS.
     subroutine s_igr_sigma_x(q_cons_vf, rhs_vf)
 #ifdef _CRAYFTN
-        !DIR$ OPTIMIZE (-haggress)
+    !DIR$ OPTIMIZE (-haggress)
 #endif
         type(scalar_field), &
             dimension(sys_size), &
@@ -464,7 +464,7 @@ contains
     !> @brief Evaluates the approximate Riemann solver for the IGR scheme along a given coordinate direction.
     subroutine s_igr_riemann_solver(q_cons_vf, rhs_vf, idir)
 #ifdef _CRAYFTN
-        !DIR$ OPTIMIZE (-haggress)
+    !DIR$ OPTIMIZE (-haggress)
 #endif
         type(scalar_field), &
             dimension(sys_size), &
@@ -504,9 +504,9 @@ contains
 
                                 #:if MFC_CASE_OPTIMIZATION
                                     #:if igr_order == 5
-                                        !DIR$ unroll 6
+                                    !DIR$ unroll 6
                                     #:elif igr_order == 3
-                                        !DIR$ unroll 4
+                                    !DIR$ unroll 4
                                     #:endif
                                 #:endif
                                 $:GPU_LOOP(parallelism='[seq]')
@@ -921,9 +921,9 @@ contains
 
                                 #:if MFC_CASE_OPTIMIZATION
                                     #:if igr_order == 5
-                                        !DIR$ unroll 6
+                                    !DIR$ unroll 6
                                     #:elif igr_order == 3
-                                        !DIR$ unroll 4
+                                    !DIR$ unroll 4
                                     #:endif
                                 #:endif
                                 $:GPU_LOOP(parallelism='[seq]')
@@ -1438,9 +1438,9 @@ contains
 
                                     #:if MFC_CASE_OPTIMIZATION
                                         #:if igr_order == 5
-                                            !DIR$ unroll 6
+                                        !DIR$ unroll 6
                                         #:elif igr_order == 3
-                                            !DIR$ unroll 4
+                                        !DIR$ unroll 4
                                         #:endif
                                     #:endif
                                     $:GPU_LOOP(parallelism='[seq]')
@@ -1835,9 +1835,9 @@ contains
 
                                     #:if MFC_CASE_OPTIMIZATION
                                         #:if igr_order == 5
-                                            !DIR$ unroll 6
+                                        !DIR$ unroll 6
                                         #:elif igr_order == 3
-                                            !DIR$ unroll 4
+                                        !DIR$ unroll 4
                                         #:endif
                                     #:endif
                                     $:GPU_LOOP(parallelism='[seq]')
@@ -2320,9 +2320,9 @@ contains
 
                                 #:if MFC_CASE_OPTIMIZATION
                                     #:if igr_order == 5
-                                        !DIR$ unroll 6
+                                    !DIR$ unroll 6
                                     #:elif igr_order == 3
-                                        !DIR$ unroll 4
+                                    !DIR$ unroll 4
                                     #:endif
                                 #:endif
                                 $:GPU_LOOP(parallelism='[seq]')

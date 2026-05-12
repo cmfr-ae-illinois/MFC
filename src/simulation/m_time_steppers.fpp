@@ -521,7 +521,7 @@ contains
     !> @brief Advances the solution one full step using a TVD Runge-Kutta time integrator.
     impure subroutine s_tvd_rk(t_step, time_avg, nstage)
 #ifdef _CRAYFTN
-        !DIR$ OPTIMIZE (-haggress)
+    !DIR$ OPTIMIZE (-haggress)
 #endif
         integer, intent(in) :: t_step
         real(wp), intent(inout) :: time_avg
@@ -660,12 +660,12 @@ contains
             wall_time_avg = 0._wp
         end if
 
-        if (minval(q_cons_ts(1)%vf(1)%sf(:, :, :)) < 0.0) then 
+        if (minval(q_cons_ts(1)%vf(1)%sf(:, :, :)) < 0.0) then
             print *, minval(q_cons_ts(1)%vf(1)%sf(:, :, :))
             call s_mpi_abort("1 negative density")
         end if
 
-        if (minval(q_cons_ts(stor)%vf(1)%sf(:, :, :)) < 0.0) then 
+        if (minval(q_cons_ts(stor)%vf(1)%sf(:, :, :)) < 0.0) then
             print *, minval(q_cons_ts(stor)%vf(1)%sf(:, :, :))
             call s_mpi_abort("stor negative density")
         end if

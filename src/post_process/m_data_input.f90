@@ -282,7 +282,7 @@ contains
         end do
 
         do i = 1, 6
-                allocate (stat_eff_visc(i)%vf(1:4))
+            allocate (stat_eff_visc(i)%vf(1:4))
         end do
         do i = 1, 6
             do j = 1, 4
