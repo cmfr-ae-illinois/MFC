@@ -22,7 +22,7 @@ fluid_vf = 1.0 - particle_vf
 
 # fluid params
 M = 1.4
-Re = 1500.0
+Re = 2000.0
 
 P = 101325
 rho = 1.225
@@ -49,7 +49,7 @@ K_Pp = -2.0*P/(Cp*M)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 2.0E-06
-Nt = int(8 * L / v1 / dt)
+Nt = int(12 * L / v1 / dt)
 t_save = Nt//400
 
 collision_time = 10.0 * dt
@@ -62,8 +62,8 @@ Nz = Ny
 ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": 0.0,
-    f"patch_ib({1})%y_centroid": -2.5*D,
+    f"patch_ib({1})%x_centroid": 0.0001,
+    f"patch_ib({1})%y_centroid": -1.0*D,
     f"patch_ib({1})%z_centroid": 0.0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
@@ -72,7 +72,7 @@ ib_dict.update({
 
     f"patch_ib({2})%geometry": 8,
     f"patch_ib({2})%x_centroid": 0.0,
-    f"patch_ib({2})%y_centroid": +2.5*D,
+    f"patch_ib({2})%y_centroid": +1.0*D,
     f"patch_ib({2})%z_centroid": 0.0,
     f"patch_ib({2})%radius": D / 2,
     f"patch_ib({2})%slip": "F",
@@ -159,7 +159,7 @@ case_dict = {
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v1,
+    "patch_icpp(1)%vel(2)": v1/2,
     "patch_icpp(1)%vel(3)": 0.0e00,
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
@@ -172,7 +172,7 @@ case_dict = {
 
     # periodic forcing
     "periodic_forcing": "T",
-    "u_inf_ref": v1,
+    "u_inf_ref": v1/2,
     "rho_inf_ref": rho,
     "P_inf_ref": P,
     "mom_f_idx": 2,
@@ -197,6 +197,7 @@ case_dict = {
     "ib_coefficient_of_friction": 0.092,
     "collision_time": collision_time,
     "coefficient_of_restitution": 0.98,  # almost perfectly elastic
+    "ib_state_wrt": "T",
 
     }
 

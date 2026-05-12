@@ -56,7 +56,7 @@ Nx = 63
 Ny = 511
 Nz = 63
 
-CFL = 0.4
+CFL = 0.45
 dx = (x1 - x0)/Nx
 dy = (y1 - y0)/Ny
 dz = (z1 - z0)/Nz
@@ -64,7 +64,7 @@ dz = (z1 - z0)/Nz
 t_final = 0.8
 dt = CFL * min(dx/cs, dy/(vel+cs), dz/cs)
 Nt = int(t_final/dt)
-t_save = Nt//300
+t_save = 2# Nt//300
 
 collision_time = 10.0 * dt
 
