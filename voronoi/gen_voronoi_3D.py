@@ -73,19 +73,23 @@ if (__name__ == '__main__'):
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
     box = freud.box.Box.cube(L)
     
-    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=40)
+    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=50)
     print(np.shape(relaxed_points))
 
     np.savetxt(output_dir+'/sphere_array_locations.txt', relaxed_points)
 
     # check no spheres are overlapping
+    min_dist = 1e6 # arbitrary large number
     for i in range(N_sphere):
         for j in range(N_sphere):
             if (i != j):
                 dist = np.sqrt((relaxed_points[i, 0] - relaxed_points[j, 0])**2 + (relaxed_points[i, 1] - relaxed_points[j, 1])**2 + (relaxed_points[i, 2] - relaxed_points[j, 2])**2)
+                if (dist < min_dist): min_dist = dist
                 if (dist <= 1.05*D):
                     print(f'spheres overlapping, dist={dist}, spheres #: {i}, {j}')
                     print(f'locations: ({relaxed_points[i, :]}), ({relaxed_points[j, :]})')
+
+    print(f'closest distance: {min_dist}')
 
     fig = plt.figure(figsize=(10,5))
     ax1 = fig.add_subplot(121, projection='3d')

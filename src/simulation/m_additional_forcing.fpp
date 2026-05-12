@@ -78,11 +78,13 @@ contains
         real(wp) :: spatial_rho_glb, spatial_u_glb, spatial_eps_glb
         real(wp) :: dVol, rho
         integer :: i, j, k, l
+        real(wp) :: spatial_E, spatial_E_glb
 
         ! zero spatial averages
         spatial_rho = 0._wp
         spatial_u = 0._wp
         spatial_eps = 0._wp
+        spatial_E = 0._wp
 
         $:GPU_UPDATE(device='[spatial_rho, spatial_u, spatial_eps]')
 
@@ -104,6 +106,7 @@ contains
                                                       q_cons_vf(momxb + 1)%sf(i, j, k)**2 + &
                                                       q_cons_vf(momxb + 2)%sf(i, j, k)**2)/ &
                                                       rho)*dVol) ! rho*e
+                        spatial_E = spatial_E + (q_cons_vf(E_idx)%sf(i, j, k) * dVol)
                     end if
                 end do
             end do
@@ -116,10 +119,12 @@ contains
         call s_mpi_allreduce_sum(spatial_rho, spatial_rho_glb)
         call s_mpi_allreduce_sum(spatial_u, spatial_u_glb)
         call s_mpi_allreduce_sum(spatial_eps, spatial_eps_glb)
+        call s_mpi_allreduce_sum(spatial_E, spatial_E_glb)
 
         spatial_rho_glb = spatial_rho_glb*avg_coeff
         spatial_u_glb = spatial_u_glb*avg_coeff
         spatial_eps_glb = spatial_eps_glb*avg_coeff
+        spatial_E_glb = spatial_E_glb*avg_coeff
 
         ! update time average window location
         window_loc = 1 + mod(t_step, forcing_window)
@@ -183,9 +188,10 @@ contains
         end do
         $:END_GPU_PARALLEL_LOOP()
 
+        !print *, minval(q_cons_vf(1)%sf(0:m,0:n,0:p)), minval(q_cons_vf(contxe+mom_f_idx)%sf(0:m,0:n,0:p)), minval(q_cons_vf(E_idx)%sf(0:m,0:n,0:p))
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, spatial_rho_glb, spatial_u_glb, spatial_eps_glb
-            write (102) spatial_rho_glb, spatial_u_glb, spatial_eps_glb
+            print *, spatial_rho_glb, spatial_u_glb, spatial_eps_glb, spatial_E_glb
+            write (102) spatial_rho_glb, spatial_u_glb, spatial_eps_glb, spatial_E_glb
             flush (102)
         end if
 

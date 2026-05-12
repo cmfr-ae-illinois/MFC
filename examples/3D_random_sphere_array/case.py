@@ -8,8 +8,8 @@ gam_a = 1.4
 D = 0.1
 L = 10 * D
 
-M = 0.8
-Re = 1500.0
+M = 1.4
+Re = 200.0
 
 P = 101325.0
 rho = 1.225
@@ -22,16 +22,16 @@ mu = rho * v1 * D / Re
 # print('rho: ', rho)
 # print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 0.8E-06
-Nt = 20 #int(L * 4 / v1 / dt)
-t_save = int(Nt/4)
+dt = 0.3E-06
+Nt = int(L * 4 / v1 / dt)
+t_save = 25 #int(Nt/4)
 t_step_start_stats = int(Nt/2)
 
 # print(Nt, t_step_start_stats)
 
 Nx = 127
-Ny = 127
-Nz = 127
+Ny = Nx
+Nz = Ny
 
 # load initial sphere locations
 sphere_loc = np.loadtxt('sphere_array_locations.txt')
@@ -72,8 +72,8 @@ case_dict = {
     "p": Nz,
     "dt": dt,
     "t_step_start": 0,
-    "t_step_stop": Nt,  # 3000
-    "t_step_save": t_save,  # 10
+    "t_step_stop": Nt,  
+    "t_step_save": t_save,  
     "t_step_start_stats": t_step_start_stats,
     # Simulation Algorithm Parameters
     # Only one patches are necessary, the air tube
@@ -84,8 +84,6 @@ case_dict = {
     "alt_soundspeed": "F",
     # One fluids: air
     "num_fluids": 1,
-    # time step
-    "mpp_lim": "F",
     # Correct errors when computing speed of sound
     "mixture_err": "T",
     # Use TVD RK3 for time marching
@@ -93,15 +91,15 @@ case_dict = {
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
     "weno_order": 5,
-    "weno_eps": 1.0e-14,
+    "weno_eps": 1.0e-16,
     "weno_Re_flux": "T",
     "weno_avg": "T",
     "avg_state": 2,
-    "mapped_weno": "T",
+    "mapped_weno": "F",
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
-    "low_Mach": 1,
+    "low_Mach": 0,
     "wave_speeds": 1,
     # periodic bc
     "bc_x%beg": -1,
@@ -119,8 +117,9 @@ case_dict = {
     "precision": 2,
     "prim_vars_wrt": "T",
     "E_wrt": "T",
-    "q_filtered_wrt": "T",
+    #"q_filtered_wrt": "T",
     "parallel_io": "T",
+    "forcing_wrt": "T",
     # Patch: Constant Tube filled with air
     # Specify the cylindrical air tube grid geometry
     "patch_icpp(1)%geometry": 9,
@@ -151,10 +150,10 @@ case_dict = {
     "P_inf_ref": P,
     "mom_f_idx": 1,
     "forcing_window": 1,
-    "forcing_dt": 1.0 / (0.5 * dt),
+    "forcing_dt": 1.0 / (2.5 * dt),
     "fluid_volume_fraction": fluid_vf,  # 1 - particle volume fraction
     # compute unclosed terms in volume filtered momentum equation
-    "volume_filter_momentum_eqn": "T",
+    #"volume_filter_momentum_eqn": "T",
     "filter_width": 3.0 * D / 2 * np.sqrt(2 / (9 * np.pi)),
     "compute_particle_drag": "T",
     # do not store a levelset field for every ib (only works for spheres)

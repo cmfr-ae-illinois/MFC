@@ -660,6 +660,16 @@ contains
             wall_time_avg = 0._wp
         end if
 
+        if (minval(q_cons_ts(1)%vf(1)%sf(:, :, :)) < 0.0) then 
+            print *, minval(q_cons_ts(1)%vf(1)%sf(:, :, :))
+            call s_mpi_abort("1 negative density")
+        end if
+
+        if (minval(q_cons_ts(stor)%vf(1)%sf(:, :, :)) < 0.0) then 
+            print *, minval(q_cons_ts(stor)%vf(1)%sf(:, :, :))
+            call s_mpi_abort("stor negative density")
+        end if
+
     end subroutine s_tvd_rk
 
     !> Bubble source part in Strang operator splitting scheme
