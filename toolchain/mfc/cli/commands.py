@@ -10,43 +10,25 @@ All command definitions live here. This file is used to generate:
 When adding a new command or option, ONLY modify this file.
 Then run `./mfc.sh generate` to update completions.
 """
-# pylint: disable=too-many-lines
 
-from .schema import (
-    CLISchema, Command, Argument, Positional, Example,
-    ArgAction, Completion, CompletionType,
-    CommonArgumentSet, MutuallyExclusiveGroup
-)
+from .schema import ArgAction, Argument, CLISchema, Command, CommonArgumentSet, Completion, CompletionType, Example, MutuallyExclusiveGroup, Positional
 
-
-# =============================================================================
 # CONSTANTS (shared with other modules)
-# =============================================================================
 
-TARGET_NAMES = [
-    'fftw', 'hdf5', 'silo', 'lapack', 'hipfort',
-    'pre_process', 'simulation', 'post_process',
-    'syscheck', 'documentation'
-]
+TARGET_NAMES = ["fftw", "hdf5", "silo", "lapack", "hipfort", "pre_process", "simulation", "post_process", "syscheck", "documentation"]
 
-DEFAULT_TARGET_NAMES = ['pre_process', 'simulation', 'post_process']
+DEFAULT_TARGET_NAMES = ["pre_process", "simulation", "post_process"]
 
-TEMPLATE_NAMES = [
-    'bridges2', 'carpenter', 'carpenter-cray', 'default',
-    'delta', 'deltaai', 'frontier', 'hipergator', 'nautilus',
-    'oscar', 'phoenix', 'phoenix-bench', 'santis', 'tuo'
-]
+TEMPLATE_NAMES = ["bridges2", "carpenter", "carpenter-cray", "default", "delta", "deltaai", "frontier", "hipergator", "nautilus", "oscar", "phoenix", "phoenix-bench", "santis", "tuo"]
 
-GPU_OPTIONS = ['acc', 'mp']
+GPU_OPTIONS = ["acc", "mp"]
 
-ENGINE_OPTIONS = ['interactive', 'batch']
+ENGINE_OPTIONS = ["interactive", "batch"]
 
-MPI_BINARIES = ['mpirun', 'jsrun', 'srun', 'mpiexec']
+MPI_BINARIES = ["mpirun", "jsrun", "srun", "mpiexec"]
 
 
-# =============================================================================
 # COMMON ARGUMENT SETS
-# =============================================================================
 
 COMMON_TARGETS = CommonArgumentSet(
     name="targets",
@@ -62,7 +44,7 @@ COMMON_TARGETS = CommonArgumentSet(
             metavar="TARGET",
             completion=Completion(type=CompletionType.CHOICES, choices=TARGET_NAMES),
         ),
-    ]
+    ],
 )
 
 COMMON_JOBS = CommonArgumentSet(
@@ -76,7 +58,7 @@ COMMON_JOBS = CommonArgumentSet(
             default=1,
             metavar="JOBS",
         ),
-    ]
+    ],
 )
 
 COMMON_VERBOSE = CommonArgumentSet(
@@ -89,7 +71,7 @@ COMMON_VERBOSE = CommonArgumentSet(
             action=ArgAction.COUNT,
             default=0,
         ),
-    ]
+    ],
 )
 
 COMMON_DEBUG_LOG = CommonArgumentSet(
@@ -102,7 +84,7 @@ COMMON_DEBUG_LOG = CommonArgumentSet(
             action=ArgAction.STORE_TRUE,
             dest="debug_log",
         ),
-    ]
+    ],
 )
 
 COMMON_GPUS = CommonArgumentSet(
@@ -116,7 +98,7 @@ COMMON_GPUS = CommonArgumentSet(
             type=int,
             default=None,
         ),
-    ]
+    ],
 )
 
 # MFCConfig flags are handled specially in argparse_gen.py
@@ -128,9 +110,7 @@ COMMON_MFC_CONFIG = CommonArgumentSet(
 )
 
 
-# =============================================================================
 # COMMAND DEFINITIONS
-# =============================================================================
 
 BUILD_COMMAND = Command(
     name="build",
@@ -153,6 +133,13 @@ BUILD_COMMAND = Command(
             action=ArgAction.STORE_TRUE,
             default=False,
             dest="case_optimization",
+        ),
+        Argument(
+            name="deps-only",
+            help="Only fetch and build dependencies, do not build MFC targets.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="deps_only",
         ),
     ],
     examples=[
@@ -315,6 +302,21 @@ RUN_COMMAND = Command(
             action=ArgAction.STORE_TRUE,
             default=False,
         ),
+        Argument(
+            name="archive",
+            help="(Interactive) Archive case inputs and outputs to PATH after the run completes.",
+            default=None,
+            metavar="PATH",
+            completion=Completion(type=CompletionType.DIRECTORIES),
+        ),
+        Argument(
+            name="archive-format",
+            help="(Interactive) Archive container format: dir (default), tar, or tar.zst.",
+            choices=["dir", "tar", "tar.zst"],
+            default="dir",
+            dest="archive_format",
+            completion=Completion(type=CompletionType.CHOICES, choices=["dir", "tar", "tar.zst"]),
+        ),
         # Profiler arguments with REMAINDER
         Argument(
             name="ncu",
@@ -346,6 +348,8 @@ RUN_COMMAND = Command(
         Example("./mfc.sh run case.py -n 4", "Run with 4 MPI ranks"),
         Example("./mfc.sh run case.py --case-optimization -j 8", "10x faster with case optimization!"),
         Example("./mfc.sh run case.py -e batch -N 2 -n 4", "Submit batch job: 2 nodes, 4 ranks/node"),
+        Example("./mfc.sh run case.py --archive /mnt/nas/mfc-runs", "Archive run into /mnt/nas/mfc-runs/<name>-<timestamp>/"),
+        Example("./mfc.sh run case.py --archive /mnt/nas/mfc-runs --archive-format tar.zst", "Archive as a compressed tarball"),
     ],
     key_options=[
         ("--case-optimization", "Hard-code params for 10x speedup!"),
@@ -354,6 +358,8 @@ RUN_COMMAND = Command(
         ("-e, --engine", "interactive or batch"),
         ("-a, --account", "Account to charge (batch)"),
         ("-w, --walltime", "Wall time limit (batch)"),
+        ("--archive PATH", "Archive inputs+outputs after interactive run"),
+        ("--archive-format FMT", "Archive format: dir, tar, tar.zst"),
     ],
 )
 
@@ -458,36 +464,61 @@ TEST_COMMAND = Command(
             type=str,
             default=None,
         ),
+        Argument(
+            name="build-coverage-cache",
+            help="Run all tests with gcov instrumentation to build the file-level coverage cache. Pass --gcov to enable coverage instrumentation in the internal build step.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="build_coverage_cache",
+        ),
+        Argument(
+            name="only-changes",
+            help="Only run tests whose covered files overlap with files changed since branching from master (uses file-level gcov coverage cache).",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="only_changes",
+        ),
+        Argument(
+            name="changes-branch",
+            help="Branch to compare against for --only-changes (default: master).",
+            type=str,
+            default="master",
+            dest="changes_branch",
+        ),
     ],
     mutually_exclusive=[
-        MutuallyExclusiveGroup(arguments=[
-            Argument(
-                name="generate",
-                help="(Test Generation) Generate golden files.",
-                action=ArgAction.STORE_TRUE,
-                default=False,
-            ),
-            Argument(
-                name="add-new-variables",
-                help="(Test Generation) If new variables are found in D/ when running tests, add them to the golden files.",
-                action=ArgAction.STORE_TRUE,
-                default=False,
-                dest="add_new_variables",
-            ),
-            Argument(
-                name="remove-old-tests",
-                help="(Test Generation) Delete test directories that are no longer needed.",
-                action=ArgAction.STORE_TRUE,
-                default=False,
-                dest="remove_old_tests",
-            ),
-        ]),
+        MutuallyExclusiveGroup(
+            arguments=[
+                Argument(
+                    name="generate",
+                    help="(Test Generation) Generate golden files.",
+                    action=ArgAction.STORE_TRUE,
+                    default=False,
+                ),
+                Argument(
+                    name="add-new-variables",
+                    help="(Test Generation) If new variables are found in D/ when running tests, add them to the golden files.",
+                    action=ArgAction.STORE_TRUE,
+                    default=False,
+                    dest="add_new_variables",
+                ),
+                Argument(
+                    name="remove-old-tests",
+                    help="(Test Generation) Delete test directories that are no longer needed.",
+                    action=ArgAction.STORE_TRUE,
+                    default=False,
+                    dest="remove_old_tests",
+                ),
+            ]
+        ),
     ],
     examples=[
         Example("./mfc.sh test", "Run all tests"),
         Example("./mfc.sh test -j 4", "Run with 4 parallel jobs"),
         Example("./mfc.sh test --only 3D", "Run only 3D tests"),
         Example("./mfc.sh test --generate", "Regenerate golden files"),
+        Example("./mfc.sh test --only-changes -j 4", "Run tests affected by changed files"),
+        Example("./mfc.sh build --gcov -j 8 && ./mfc.sh test --build-coverage-cache", "One-time: build file-coverage cache"),
     ],
     key_options=[
         ("-j, --jobs N", "Number of parallel test jobs"),
@@ -495,6 +526,8 @@ TEST_COMMAND = Command(
         ("-f, --from UUID", "Start from specific test"),
         ("--generate", "Generate/update golden files"),
         ("--no-build", "Skip rebuilding MFC"),
+        ("--build-coverage-cache", "Build file-level gcov coverage cache (one-time)"),
+        ("--only-changes", "Run tests affected by changed files (requires cache)"),
     ],
 )
 
@@ -718,20 +751,20 @@ LOAD_COMMAND = Command(
 LINT_COMMAND = Command(
     name="lint",
     help="Lints and tests all toolchain code.",
-    description="Run pylint and unit tests on MFC's toolchain Python code.",
+    description="Run ruff and unit tests on MFC's toolchain Python code.",
     arguments=[
         Argument(
             name="no-test",
-            help="Skip running unit tests (only run pylint).",
+            help="Skip running unit tests (only run ruff).",
             action=ArgAction.STORE_TRUE,
         ),
     ],
     examples=[
-        Example("./mfc.sh lint", "Run pylint and unit tests"),
-        Example("./mfc.sh lint --no-test", "Run only pylint (skip unit tests)"),
+        Example("./mfc.sh lint", "Run ruff and unit tests"),
+        Example("./mfc.sh lint --no-test", "Run only ruff (skip unit tests)"),
     ],
     key_options=[
-        ("--no-test", "Skip unit tests, only run pylint"),
+        ("--no-test", "Skip unit tests, only run ruff"),
     ],
 )
 
@@ -867,6 +900,133 @@ COUNT_DIFF_COMMAND = Command(
     include_common=["targets", "mfc_config", "jobs", "verbose", "debug_log"],
 )
 
+FP_STABILITY_COMMAND = Command(
+    name="fp-stability",
+    help="Run floating-point stability tests using Verrou.",
+    description=(
+        "Runs each registered test case N times under Verrou's random IEEE-754 "
+        "rounding mode and compares against a nearest-rounding reference run. "
+        "Reports the max L∞ deviation and PASS/FAIL against per-case thresholds.\n\n"
+        "Requires a Verrou-enabled Valgrind at $VERROU_HOME/bin/valgrind "
+        "(defaults to $HOME/.local/verrou). The simulation and pre_process "
+        "binaries must be serial (no-MPI, no-GPU) debug builds.\n\n"
+        "Test cases:\n"
+        "  sod_standard      1-D standard Sod, p_L/p_R=10 (well-conditioned baseline)\n"
+        "  sod_strong        1-D Sod, p_L/p_R=100,000 — HLLC xi-factor cancellation\n"
+        "  water_stiffened   1-D water shock (pi_inf=4046) — pressure-recovery cancellation\n"
+        "  air_water_interface  1-D air/water contact (two-fluid) — mixed-cell cancellation\n\n"
+        "Additional features (skip with --no-* flags):\n"
+        "  float proxy    One run with --rounding-mode=float (single-precision sensitivity)\n"
+        "  vprec sweep    Runs at mantissa bits [52, 23, 16, 10] (precision floor curve)\n"
+        "  dd_sym         verrou_dd_sym bisection to responsible functions (on failure)\n"
+        "  dd_line        verrou_dd_line bisection to responsible source lines (on failure)\n"
+        "  cancellation   --check-cancellation detection of catastrophic cancellation sites\n"
+        "  mca-sigbits    Monte Carlo Arithmetic (mcaquad) significant-bits lower bound\n"
+        "  float-max      --check-max-float detection of double→float overflow sites\n"
+    ),
+    include_common=["mfc_config", "verbose", "debug_log"],
+    arguments=[
+        Argument(
+            name="sim-binary",
+            help="Path to a serial simulation binary (debug, no-MPI). Auto-discovered from build/install/ if omitted.",
+            default=None,
+            metavar="PATH",
+        ),
+        Argument(
+            name="pre-binary",
+            help="Path to a serial pre_process binary (no-MPI). Auto-discovered from build/install/ if omitted.",
+            default=None,
+            metavar="PATH",
+        ),
+        Argument(
+            name="verrou-binary",
+            help="Path to a Verrou-enabled valgrind binary. Defaults to $VERROU_HOME/bin/valgrind or $HOME/.local/verrou/bin/valgrind.",
+            default=None,
+            metavar="PATH",
+        ),
+        Argument(
+            name="samples",
+            short="N",
+            help="Number of random-rounding simulation runs per test case.",
+            type=int,
+            default=5,
+            metavar="N",
+        ),
+        Argument(
+            name="no-float-proxy",
+            help="Skip the --rounding-mode=float single-precision sensitivity run.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_float_proxy",
+        ),
+        Argument(
+            name="no-vprec",
+            help="Skip the VPREC mantissa-bit precision sweep.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_vprec",
+        ),
+        Argument(
+            name="no-dd-sym",
+            help="Skip verrou_dd_sym function-level delta-debug on failure.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_dd_sym",
+        ),
+        Argument(
+            name="no-dd-line",
+            help="Skip verrou_dd_line source-line delta-debug on failure.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_dd_line",
+        ),
+        Argument(
+            name="no-cancellation",
+            help="Skip --check-cancellation catastrophic-cancellation detection.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_cancellation",
+        ),
+        Argument(
+            name="no-mca",
+            help="Skip Monte Carlo Arithmetic (mcaquad) significant-bits estimate.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_mca",
+        ),
+        Argument(
+            name="no-float-max",
+            help="Skip --check-max-float float32 overflow detection.",
+            action=ArgAction.STORE_TRUE,
+            default=False,
+            dest="no_float_max",
+        ),
+    ],
+    examples=[
+        Example("./mfc.sh fp-stability", "Auto-discover binaries and run all cases"),
+        Example(
+            "./mfc.sh fp-stability --sim-binary build/install/abc123/bin/simulation",
+            "Specify simulation binary explicitly",
+        ),
+        Example("./mfc.sh fp-stability -N 10", "Run 10 random-rounding samples per case"),
+        Example("./mfc.sh fp-stability --no-vprec --no-dd-line", "Skip VPREC sweep and line debug"),
+        Example("./mfc.sh fp-stability --no-cancellation --no-mca --no-float-max", "Skip new analysis passes"),
+    ],
+    key_options=[
+        ("--sim-binary PATH", "Serial simulation binary (debug, no-MPI)"),
+        ("--pre-binary PATH", "Serial pre_process binary"),
+        ("--verrou-binary PATH", "Verrou-enabled valgrind"),
+        ("-N, --samples N", "Random-rounding samples per case (default: 5)"),
+        ("--no-float-proxy", "Skip float-rounding proxy run"),
+        ("--no-vprec", "Skip VPREC mantissa-bit sweep"),
+        ("--no-dd-sym", "Skip verrou_dd_sym on failure"),
+        ("--no-dd-line", "Skip verrou_dd_line on failure"),
+        ("--no-cancellation", "Skip cancellation detection"),
+        ("--no-mca", "Skip MCA significant-bits estimate"),
+        ("--no-float-max", "Skip float32 overflow detection"),
+    ],
+)
+
 VIZ_COMMAND = Command(
     name="viz",
     help="Visualize post-processed MFC output.",
@@ -918,7 +1078,7 @@ VIZ_COMMAND = Command(
                 "Use --list-steps to see available timesteps."
             ),
             type=str,
-            default='last',
+            default="last",
             metavar="STEP",
         ),
         Argument(
@@ -943,33 +1103,102 @@ VIZ_COMMAND = Command(
             name="cmap",
             help="Matplotlib colormap name (--png, --mp4 only).",
             type=str,
-            default='viridis',
+            default="viridis",
             metavar="CMAP",
-            completion=Completion(type=CompletionType.CHOICES, choices=[
-                # Perceptually uniform sequential
-                "viridis", "plasma", "inferno", "magma", "cividis",
-                # Diverging
-                "RdBu", "RdYlBu", "RdYlGn", "RdGy", "coolwarm", "bwr", "seismic",
-                "PiYG", "PRGn", "BrBG", "PuOr", "Spectral",
-                # Sequential
-                "Blues", "Greens", "Oranges", "Reds", "Purples", "Greys",
-                "YlOrRd", "YlOrBr", "YlGn", "YlGnBu", "GnBu", "BuGn",
-                "BuPu", "PuBu", "PuBuGn", "PuRd", "RdPu",
-                # Sequential 2
-                "hot", "afmhot", "gist_heat", "copper",
-                "bone", "gray", "pink", "spring", "summer", "autumn", "winter", "cool",
-                "binary", "gist_yarg", "gist_gray",
-                # Cyclic
-                "twilight", "twilight_shifted", "hsv",
-                # Qualitative
-                "tab10", "tab20", "tab20b", "tab20c",
-                "Set1", "Set2", "Set3", "Paired", "Accent", "Dark2", "Pastel1", "Pastel2",
-                # Miscellaneous
-                "turbo", "jet", "rainbow", "nipy_spectral", "gist_ncar",
-                "gist_rainbow", "gist_stern", "gist_earth", "ocean", "terrain",
-                "gnuplot", "gnuplot2", "CMRmap", "cubehelix", "brg", "flag", "prism",
-                "Wistia",
-            ]),
+            completion=Completion(
+                type=CompletionType.CHOICES,
+                choices=[
+                    # Perceptually uniform sequential
+                    "viridis",
+                    "plasma",
+                    "inferno",
+                    "magma",
+                    "cividis",
+                    # Diverging
+                    "RdBu",
+                    "RdYlBu",
+                    "RdYlGn",
+                    "RdGy",
+                    "coolwarm",
+                    "bwr",
+                    "seismic",
+                    "PiYG",
+                    "PRGn",
+                    "BrBG",
+                    "PuOr",
+                    "Spectral",
+                    # Sequential
+                    "Blues",
+                    "Greens",
+                    "Oranges",
+                    "Reds",
+                    "Purples",
+                    "Greys",
+                    "YlOrRd",
+                    "YlOrBr",
+                    "YlGn",
+                    "YlGnBu",
+                    "GnBu",
+                    "BuGn",
+                    "BuPu",
+                    "PuBu",
+                    "PuBuGn",
+                    "PuRd",
+                    "RdPu",
+                    # Sequential 2
+                    "hot",
+                    "afmhot",
+                    "gist_heat",
+                    "copper",
+                    "bone",
+                    "gray",
+                    "pink",
+                    "spring",
+                    "summer",
+                    "autumn",
+                    "winter",
+                    "cool",
+                    "binary",
+                    "gist_yarg",
+                    "gist_gray",
+                    # Cyclic
+                    "twilight",
+                    "twilight_shifted",
+                    "hsv",
+                    # Qualitative
+                    "tab10",
+                    "tab20",
+                    "tab20b",
+                    "tab20c",
+                    "Set1",
+                    "Set2",
+                    "Set3",
+                    "Paired",
+                    "Accent",
+                    "Dark2",
+                    "Pastel1",
+                    "Pastel2",
+                    # Miscellaneous
+                    "turbo",
+                    "jet",
+                    "rainbow",
+                    "nipy_spectral",
+                    "gist_ncar",
+                    "gist_rainbow",
+                    "gist_stern",
+                    "gist_earth",
+                    "ocean",
+                    "terrain",
+                    "gnuplot",
+                    "gnuplot2",
+                    "CMRmap",
+                    "cubehelix",
+                    "brg",
+                    "flag",
+                    "prism",
+                    "Wistia",
+                ],
+            ),
         ),
         Argument(
             name="vmin",
@@ -996,7 +1225,7 @@ VIZ_COMMAND = Command(
             name="slice-axis",
             help="Axis for 3D slice (--png, --mp4 only).",
             type=str,
-            default='z',
+            default="z",
             choices=["x", "y", "z"],
             dest="slice_axis",
             completion=Completion(type=CompletionType.CHOICES, choices=["x", "y", "z"]),
@@ -1054,11 +1283,7 @@ VIZ_COMMAND = Command(
         Argument(
             name="interactive",
             short="i",
-            help=(
-                "Launch an interactive Dash web UI in your browser. "
-                "Loads all timesteps (or the set given by --step) and lets you "
-                "scrub through them and switch variables live."
-            ),
+            help=("Launch an interactive Dash web UI in your browser. Loads all timesteps (or the set given by --step) and lets you scrub through them and switch variables live."),
             action=ArgAction.STORE_TRUE,
             default=False,
         ),
@@ -1077,10 +1302,7 @@ VIZ_COMMAND = Command(
         ),
         Argument(
             name="png",
-            help=(
-                "Save PNG image(s) to the output directory instead of "
-                "launching the terminal UI."
-            ),
+            help=("Save PNG image(s) to the output directory instead of launching the terminal UI."),
             action=ArgAction.STORE_TRUE,
             default=False,
         ),
@@ -1215,9 +1437,7 @@ PARAMS_COMMAND = Command(
 )
 
 
-# =============================================================================
 # HELP TOPICS
-# =============================================================================
 
 HELP_TOPICS = {
     "gpu": {
@@ -1239,9 +1459,7 @@ HELP_TOPICS = {
 }
 
 
-# =============================================================================
 # COMPLETE CLI SCHEMA
-# =============================================================================
 
 MFC_CLI_SCHEMA = CLISchema(
     prog="./mfc.sh",
@@ -1250,7 +1468,6 @@ Welcome to the MFC master script. This tool automates and manages building, test
 running, and cleaning of MFC in various configurations on all supported platforms. \
 The README documents this tool and its various commands in more detail. To get \
 started, run `./mfc.sh build -h`.""",
-
     arguments=[
         Argument(
             name="help",
@@ -1259,7 +1476,6 @@ started, run `./mfc.sh build -h`.""",
             action=ArgAction.STORE_TRUE,
         ),
     ],
-
     commands=[
         BUILD_COMMAND,
         RUN_COMMAND,
@@ -1283,8 +1499,8 @@ started, run `./mfc.sh build -h`.""",
         BENCH_DIFF_COMMAND,
         COUNT_COMMAND,
         COUNT_DIFF_COMMAND,
+        FP_STABILITY_COMMAND,
     ],
-
     common_sets=[
         COMMON_TARGETS,
         COMMON_JOBS,
@@ -1293,20 +1509,18 @@ started, run `./mfc.sh build -h`.""",
         COMMON_GPUS,
         COMMON_MFC_CONFIG,
     ],
-
     help_topics=HELP_TOPICS,
 )
 
 
-# =============================================================================
 # DERIVED DATA (for use by other modules)
-# =============================================================================
 
 # Command aliases mapping (replaces COMMAND_ALIASES in user_guide.py)
 COMMAND_ALIASES = {}
 for cmd in MFC_CLI_SCHEMA.commands:
     for alias in cmd.aliases:
         COMMAND_ALIASES[alias] = cmd.name
+
 
 # Commands dict (replaces COMMANDS in user_guide.py)
 def get_commands_dict():
@@ -1320,5 +1534,6 @@ def get_commands_dict():
         }
         for cmd in MFC_CLI_SCHEMA.commands
     }
+
 
 COMMANDS = get_commands_dict()

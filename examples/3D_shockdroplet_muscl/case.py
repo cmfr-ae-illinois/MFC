@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import math
 import json
+import math
 
 # athmospheric pressure - Pa (used as reference value)
 patm = 101325
@@ -202,7 +202,7 @@ print(
             "recon_type": 2,
             "muscl_order": 2,
             "muscl_lim": 3,
-            "int_comp": "T",
+            "int_comp": 1,
             "riemann_solver": 2,
             "wave_speeds": 1,
             "avg_state": 2,

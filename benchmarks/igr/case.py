@@ -5,9 +5,9 @@
 # - viscous : T
 # - igr_order : 5
 
+import argparse
 import json
 import math
-import argparse
 
 parser = argparse.ArgumentParser(prog="Benchmarking Case 5", description="This MFC case was created for the purposes of benchmarking MFC.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -69,6 +69,7 @@ print(
             "num_patches": 1,
             "model_eqns": 2,
             "num_fluids": 1,
+            "riemann_solver": 5,
             "time_stepper": 3,
             "bc_x%beg": -1,
             "bc_x%end": -1,
