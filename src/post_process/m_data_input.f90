@@ -202,10 +202,10 @@ contains
                                                        local_start_idx:end_y, &
                                                        local_start_idx:end_z))
 
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             allocate (stat_q_cons_filtered(i)%vf(1:4))
         end do
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 allocate (stat_q_cons_filtered(i)%vf(j)%sf(local_start_idx:end_x, &
                                                            local_start_idx:end_y, &
@@ -561,7 +561,7 @@ contains
         allocate (q_cons_temp(1:sys_size))
 
         if (q_filtered_wrt) then
-            allocate (stat_q_cons_filtered(1:E_idx))
+            allocate (stat_q_cons_filtered(1:eqn_idx%E))
             allocate (stat_filtered_pressure(1:4))
             allocate (stat_reynolds_stress(1:6))
             allocate (stat_eff_visc(1:6))
@@ -650,7 +650,7 @@ contains
         if (q_filtered_wrt) then
             deallocate (filtered_fluid_indicator_function%sf)
 
-            do i = 1, E_idx
+            do i = 1, eqn_idx%E
                 do j = 1, 4
                     deallocate (stat_q_cons_filtered(i)%vf(j)%sf)
                 end do

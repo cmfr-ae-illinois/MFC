@@ -38,7 +38,7 @@ contains
         end do
 
         ! total cartesian domain volume
-        domain_vol = (domain_glb(1, 2) - domain_glb(1, 1))*(domain_glb(2, 2) - domain_glb(2, 1))*(domain_glb(3, 2) - domain_glb(3, 1))
+        domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
 
         ! coefficient used for phase averages
         avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
@@ -71,9 +71,10 @@ contains
     end subroutine s_initialize_additional_forcing_module
 
     !< compute the space and time average of quantities, compute the periodic forcing terms described in Khalloufi and Capecelatro
-    subroutine s_compute_periodic_forcing(rhs_vf, q_cons_vf, t_step)
+    subroutine s_compute_periodic_forcing(rhs_vf, q_cons_vf, q_prim_vf, t_step)
         type(scalar_field), dimension(sys_size), intent(inout) :: rhs_vf
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
+        type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
         integer, intent(in) :: t_step
         real(wp) :: spatial_rho_glb, spatial_u_glb, spatial_eps_glb
         real(wp) :: dVol, rho
@@ -96,17 +97,17 @@ contains
                     if (ib_markers%sf(i, j, k) == 0) then
                         rho = 0._wp
                         do l = 1, num_fluids
-                            rho = rho + q_cons_vf(contxb + l - 1)%sf(i, j, k)
+                            rho = rho + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                         end do
                         dVol = dx(i)*dy(j)*dz(k)
                         spatial_rho = spatial_rho + (rho*dVol) ! rho
-                        spatial_u = spatial_u + (q_cons_vf(contxe + mom_f_idx)%sf(i, j, k)*dVol) ! rho*u
-                        spatial_eps = spatial_eps + ((q_cons_vf(E_idx)%sf(i, j, k) - 0.5_wp*( &
-                                                      q_cons_vf(momxb)%sf(i, j, k)**2 + &
-                                                      q_cons_vf(momxb + 1)%sf(i, j, k)**2 + &
-                                                      q_cons_vf(momxb + 2)%sf(i, j, k)**2)/ &
+                        spatial_u = spatial_u + (q_cons_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k)*dVol) ! rho*u
+                        spatial_eps = spatial_eps + ((q_cons_vf(eqn_idx%E)%sf(i, j, k) - 0.5_wp*( &
+                                                      q_cons_vf(eqn_idx%mom%beg)%sf(i, j, k)**2 + &
+                                                      q_cons_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)**2 + &
+                                                      q_cons_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)**2)/ &
                                                       rho)*dVol) ! rho*e
-                        spatial_E = spatial_E + (q_cons_vf(E_idx)%sf(i, j, k) * dVol)
+                        spatial_E = spatial_E + (q_cons_vf(eqn_idx%E)%sf(i, j, k) * dVol)
                     end if
                 end do
             end do
@@ -155,7 +156,7 @@ contains
                 do k = 0, p
                     rho = 0._wp
                     do l = 1, num_fluids
-                        rho = rho + q_cons_vf(contxb + l - 1)%sf(i, j, k)
+                        rho = rho + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                     end do
                     ! f_rho
                     q_periodic_force(1)%sf(i, j, k) = (rho_inf_ref - phase_rho)*forcing_dt
@@ -165,7 +166,7 @@ contains
 
                     ! f_E
                     q_periodic_force(3)%sf(i, j, k) = (P_inf_ref*gammas(1) - phase_eps)*forcing_dt &
-                                                      + q_cons_vf(contxe + mom_f_idx)%sf(i, j, k)*q_periodic_force(2)%sf(i, j, k)/rho
+                                                      + q_cons_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k)*q_periodic_force(2)%sf(i, j, k)/rho
                 end do
             end do
         end do
@@ -178,17 +179,17 @@ contains
                 do k = 0, p
                     if (ib_markers%sf(i, j, k) == 0) then
                         do l = 1, num_fluids
-                            rhs_vf(contxb + l - 1)%sf(i, j, k) = rhs_vf(contxb + l - 1)%sf(i, j, k) + q_periodic_force(1)%sf(i, j, k) ! continuity
+                            rhs_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k) + q_periodic_force(1)%sf(i, j, k) ! continuity
                         end do
-                        rhs_vf(contxe + mom_f_idx)%sf(i, j, k) = rhs_vf(contxe + mom_f_idx)%sf(i, j, k) + q_periodic_force(2)%sf(i, j, k) ! momentum
-                        rhs_vf(E_idx)%sf(i, j, k) = rhs_vf(E_idx)%sf(i, j, k) + q_periodic_force(3)%sf(i, j, k) ! energy
+                        rhs_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k) = rhs_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k) + q_periodic_force(2)%sf(i, j, k) ! momentum
+                        rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(3)%sf(i, j, k) ! energy
                     end if
                 end do
             end do
         end do
         $:END_GPU_PARALLEL_LOOP()
 
-        !print *, minval(q_cons_vf(1)%sf(0:m,0:n,0:p)), minval(q_cons_vf(contxe+mom_f_idx)%sf(0:m,0:n,0:p)), minval(q_cons_vf(E_idx)%sf(0:m,0:n,0:p))
+        !print *, minval(q_cons_vf(1)%sf(0:m,0:n,0:p)), minval(q_cons_vf(eqn_idx%cont%end+mom_f_idx)%sf(0:m,0:n,0:p)), minval(q_cons_vf(eqn_idx%E)%sf(0:m,0:n,0:p))
         if (forcing_wrt .and. proc_rank == 0) then
             print *, spatial_rho_glb, spatial_u_glb, spatial_eps_glb, spatial_E_glb
             write (102) spatial_rho_glb, spatial_u_glb, spatial_eps_glb, spatial_E_glb

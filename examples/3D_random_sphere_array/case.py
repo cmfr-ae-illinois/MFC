@@ -22,7 +22,7 @@ mu = rho * v1 * D / Re
 # print('rho: ', rho)
 # print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 0.3E-06
+dt = 0.8E-06
 Nt = int(L * 4 / v1 / dt)
 t_save = 25 #int(Nt/4)
 t_step_start_stats = int(Nt/2)
@@ -153,10 +153,11 @@ case_dict = {
     "forcing_dt": 1.0 / (2.5 * dt),
     "fluid_volume_fraction": fluid_vf,  # 1 - particle volume fraction
     # compute unclosed terms in volume filtered momentum equation
+
     #"volume_filter_momentum_eqn": "T",
+    
     "filter_width": 3.0 * D / 2 * np.sqrt(2 / (9 * np.pi)),
     "compute_particle_drag": "T",
-    # do not store a levelset field for every ib (only works for spheres)
     # MPI domain decomposition into slabs instead of blocks
     "slab_domain_decomposition": "T",
 }

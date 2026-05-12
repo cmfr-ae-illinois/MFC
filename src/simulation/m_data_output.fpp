@@ -72,13 +72,13 @@ contains
         type(vector_field), dimension(6), intent(inout), optional :: stat_reynolds_stress
         type(vector_field), dimension(6), intent(inout), optional :: stat_eff_visc
         type(vector_field), dimension(num_dims), intent(inout), optional :: stat_int_mom_exch
-        type(vector_field), dimension(E_idx), intent(inout), optional :: stat_q_cons_filtered
+        type(vector_field), dimension(eqn_idx%E), intent(inout), optional :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(inout), optional :: stat_filtered_pressure
 
         if (.not. parallel_io) then
             call s_write_serial_data_files(q_cons_vf, q_T_sf, q_prim_vf, t_step, bc_type, beta)
         else
-            call s_write_parallel_data_files(q_cons_vf, t_step, bc_type, beta, &
+            call s_write_parallel_data_files(q_cons_vf, t_step, bc_type, beta, q_T_sf, &
                                              filtered_fluid_indicator_function, &
                                              stat_q_cons_filtered, stat_filtered_pressure, &
                                              stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
@@ -661,7 +661,7 @@ contains
         type(integer_field), dimension(1:num_dims,-1:1), intent(in) :: bc_type
         type(scalar_field), intent(inout), optional                 :: q_T_sf
         type(scalar_field), intent(inout), optional :: filtered_fluid_indicator_function
-        type(vector_field), dimension(E_idx), intent(inout), optional :: stat_q_cons_filtered
+        type(vector_field), dimension(eqn_idx%E), intent(inout), optional :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(inout), optional :: stat_filtered_pressure
         type(vector_field), dimension(6), intent(inout), optional :: stat_reynolds_stress
         type(vector_field), dimension(6), intent(inout), optional :: stat_eff_visc

@@ -73,11 +73,11 @@ contains
             @:ACC_SETUP_VFs(Msn_int_mom_exch(i))
         end do
 
-        @:ALLOCATE(Msn_q_cons_filtered(E_idx))
-        do i = 1, E_idx
+        @:ALLOCATE(Msn_q_cons_filtered(eqn_idx%E))
+        do i = 1, eqn_idx%E
             @:ALLOCATE(Msn_q_cons_filtered(i)%vf(1:4))
         end do
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 @:ALLOCATE(Msn_q_cons_filtered(i)%vf(j)%sf(0:m, 0:n, 0:p))
             end do
@@ -123,11 +123,11 @@ contains
             @:ACC_SETUP_VFs(stat_int_mom_exch(i))
         end do
 
-        @:ALLOCATE(stat_q_cons_filtered(E_idx))
-        do i = 1, E_idx
+        @:ALLOCATE(stat_q_cons_filtered(eqn_idx%E))
+        do i = 1, eqn_idx%E
             @:ALLOCATE(stat_q_cons_filtered(i)%vf(1:4))
         end do
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 @:ALLOCATE(stat_q_cons_filtered(i)%vf(j)%sf(0:m, 0:n, 0:p))
             end do
@@ -164,7 +164,7 @@ contains
         do i = 1, num_dims
             call s_update_statistics(ns, int_mom_exch(i), Msn_int_mom_exch(i)%vf)
         end do
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             call s_update_statistics(ns, q_cons_filtered(i), Msn_q_cons_filtered(i)%vf)
         end do
         call s_update_statistics(ns, filtered_pressure, Msn_filtered_pressure)
@@ -178,7 +178,7 @@ contains
             do i = 1, num_dims
                 call s_compute_statistical_moments(ns, Msn_int_mom_exch(i)%vf, stat_int_mom_exch(i)%vf)
             end do
-            do i = 1, E_idx
+            do i = 1, eqn_idx%E
                 call s_compute_statistical_moments(ns, Msn_q_cons_filtered(i)%vf, stat_q_cons_filtered(i)%vf)
             end do
             call s_compute_statistical_moments(ns, Msn_filtered_pressure, stat_filtered_pressure)
@@ -261,7 +261,7 @@ contains
         end do
         @:DEALLOCATE(Msn_int_mom_exch)
 
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 @:DEALLOCATE(Msn_q_cons_filtered(i)%vf(j)%sf)
             end do
@@ -298,7 +298,7 @@ contains
         end do
         @:DEALLOCATE(stat_int_mom_exch)
 
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 @:DEALLOCATE(stat_q_cons_filtered(i)%vf(j)%sf)
             end do

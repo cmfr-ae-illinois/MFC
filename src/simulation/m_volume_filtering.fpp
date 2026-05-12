@@ -348,9 +348,9 @@ contains
         ! gaussian filter
         sigma_stddev = filter_width
 
-        Lx = domain_glb(1, 2) - domain_glb(1, 1)
-        Ly = domain_glb(2, 2) - domain_glb(2, 1)
-        Lz = domain_glb(3, 2) - domain_glb(3, 1)
+        Lx = x_domain%end - x_domain%beg
+        Ly = y_domain%end - y_domain%beg
+        Lz = z_domain%end - z_domain%beg
 
         G_norm_int = 0.0_wp
 
@@ -358,9 +358,9 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    x_r = min(abs(x_cc(i) - domain_glb(1, 1)), Lx - abs(x_cc(i) - domain_glb(1, 1)))
-                    y_r = min(abs(y_cc(j) - domain_glb(2, 1)), Ly - abs(y_cc(j) - domain_glb(2, 1)))
-                    z_r = min(abs(z_cc(k) - domain_glb(3, 1)), Lz - abs(z_cc(k) - domain_glb(3, 1)))
+                    x_r = min(abs(x_cc(i) - x_domain%beg), Lx - abs(x_cc(i) - x_domain%beg))
+                    y_r = min(abs(y_cc(j) - y_domain%beg), Ly - abs(y_cc(j) - y_domain%beg))
+                    z_r = min(abs(z_cc(k) - z_domain%beg), Lz - abs(z_cc(k) - z_domain%beg))
 
                     r2 = x_r**2 + y_r**2 + z_r**2
 
@@ -602,7 +602,7 @@ contains
 
         call s_setup_terms_filtering(q_cons_vf, q_prim_vf, dyn_visc, reynolds_stress, visc_stress, pres_visc_stress, div_pres_visc_stress, bc_type)
 
-        call s_filter_batch(q_cons_vf, q_cons_filtered, q_prim_vf(E_idx), filtered_pressure, reynolds_stress, visc_stress, eff_visc, int_mom_exch)
+        call s_filter_batch(q_cons_vf, q_cons_filtered, q_prim_vf(eqn_idx%E), filtered_pressure, reynolds_stress, visc_stress, eff_visc, int_mom_exch)
 
         ! generate Favre filtered primitives
         call s_convert_conservative_to_primitive_variables(q_cons_filtered, q_T_sf, q_prim_filtered, idwint)
@@ -662,12 +662,12 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    pres_visc_stress(1)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(1)%sf(i, j, k)
+                    pres_visc_stress(1)%sf(i, j, k) = q_prim_vf(eqn_idx%E)%sf(i, j, k) - visc_stress(1)%sf(i, j, k)
                     pres_visc_stress(2)%sf(i, j, k) = -visc_stress(2)%sf(i, j, k)
                     pres_visc_stress(3)%sf(i, j, k) = -visc_stress(3)%sf(i, j, k)
-                    pres_visc_stress(4)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(4)%sf(i, j, k)
+                    pres_visc_stress(4)%sf(i, j, k) = q_prim_vf(eqn_idx%E)%sf(i, j, k) - visc_stress(4)%sf(i, j, k)
                     pres_visc_stress(5)%sf(i, j, k) = -visc_stress(5)%sf(i, j, k)
-                    pres_visc_stress(6)%sf(i, j, k) = q_prim_vf(E_idx)%sf(i, j, k) - visc_stress(6)%sf(i, j, k)
+                    pres_visc_stress(6)%sf(i, j, k) = q_prim_vf(eqn_idx%E)%sf(i, j, k) - visc_stress(6)%sf(i, j, k)
                 end do
             end do
         end do
@@ -721,19 +721,19 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    reynolds_stress(1)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb    )%sf(i, j, k)) ! rho*(u x u)
-                    reynolds_stress(2)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb + 1)%sf(i, j, k)) 
-                    reynolds_stress(3)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb    )%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
-                    reynolds_stress(4)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 1)%sf(i, j, k)*q_prim_vf(momxb + 1)%sf(i, j, k)) 
-                    reynolds_stress(5)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 1)%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
-                    reynolds_stress(6)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(momxb + 2)%sf(i, j, k)*q_prim_vf(momxb + 2)%sf(i, j, k)) 
+                    reynolds_stress(1)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg    )%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg    )%sf(i, j, k)) ! rho*(u x u)
+                    reynolds_stress(2)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg    )%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)) 
+                    reynolds_stress(3)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg    )%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)) 
+                    reynolds_stress(4)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)) 
+                    reynolds_stress(5)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)) 
+                    reynolds_stress(6)%sf(i, j, k) = q_cons_vf(1)%sf(i, j, k)*(q_prim_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)*q_prim_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)) 
                 end do
             end do
         end do
         $:END_GPU_PARALLEL_LOOP()
 
         ! set density and momentum buffers
-        do i = contxb, momxe
+        do i = eqn_idx%cont%beg, eqn_idx%mom%end
             call s_populate_scalarfield_buffers(bc_type, q_prim_vf(i))
         end do
 
@@ -761,12 +761,12 @@ contains
         do i = 0, m
             do j = 0, n
                 do k = 0, p
-                    reynolds_stress(1)%sf(i, j, k) = reynolds_stress(1)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb    )%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                    reynolds_stress(2)%sf(i, j, k) = reynolds_stress(2)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                    reynolds_stress(3)%sf(i, j, k) = reynolds_stress(3)%sf(i, j, k) - (q_cons_filtered(momxb    )%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                    reynolds_stress(4)%sf(i, j, k) = reynolds_stress(4)%sf(i, j, k) - (q_cons_filtered(momxb + 1)%sf(i, j, k)*q_cons_filtered(momxb + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                    reynolds_stress(5)%sf(i, j, k) = reynolds_stress(5)%sf(i, j, k) - (q_cons_filtered(momxb + 1)%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
-                    reynolds_stress(6)%sf(i, j, k) = reynolds_stress(6)%sf(i, j, k) - (q_cons_filtered(momxb + 2)%sf(i, j, k)*q_cons_filtered(momxb + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(1)%sf(i, j, k) = reynolds_stress(1)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg    )%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg    )%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(2)%sf(i, j, k) = reynolds_stress(2)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg    )%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(3)%sf(i, j, k) = reynolds_stress(3)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg    )%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(4)%sf(i, j, k) = reynolds_stress(4)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg + 1)%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg + 1)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(5)%sf(i, j, k) = reynolds_stress(5)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg + 1)%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
+                    reynolds_stress(6)%sf(i, j, k) = reynolds_stress(6)%sf(i, j, k) - (q_cons_filtered(eqn_idx%mom%beg + 2)%sf(i, j, k)*q_cons_filtered(eqn_idx%mom%beg + 2)%sf(i, j, k)/q_cons_filtered(1)%sf(i, j, k))
                 end do
             end do
         end do
@@ -784,7 +784,7 @@ contains
         integer :: i, j, k, l, q
 
         ! set buffers for filtered momentum quantities and density
-        do i = momxb, momxe
+        do i = eqn_idx%mom%beg, eqn_idx%mom%end
             call s_populate_scalarfield_buffers(bc_type, q_prim_filtered(i))
         end do
 

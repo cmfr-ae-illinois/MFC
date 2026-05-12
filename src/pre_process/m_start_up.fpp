@@ -530,8 +530,6 @@ contains
             end if
         end if
 
-        call s_mpi_global_domain_bounds()
-
     end subroutine s_read_grid
 
     !> Generate or read the initial condition, apply relaxation if needed, and write output data files.

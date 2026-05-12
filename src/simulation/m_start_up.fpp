@@ -820,7 +820,7 @@ contains
                     $:GPU_UPDATE(host='[stat_int_mom_exch(i)%vf(j)%sf]')
                 end do
             end do
-            do i = 1, E_idx
+            do i = 1, eqn_idx%E
                 do j = 1, 4
                     $:GPU_UPDATE(host='[stat_q_cons_filtered(i)%vf(j)%sf]')
                 end do

@@ -29,7 +29,7 @@ module m_boundary_common
         & s_populate_capillary_buffers, s_populate_F_igr_buffers, s_write_serial_boundary_condition_files, &
         & s_write_parallel_boundary_condition_files, s_read_serial_boundary_condition_files, &
         & s_read_parallel_boundary_condition_files, s_assign_default_bc_type, s_populate_grid_variables_buffers, &
-        & s_finalize_boundary_common_module
+        & s_finalize_boundary_common_module, s_populate_scalarfield_buffers
 
     public :: bc_buffers
 

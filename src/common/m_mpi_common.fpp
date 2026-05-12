@@ -42,10 +42,6 @@ module m_mpi_common
     $:GPU_DECLARE(create='[buff_send_scalarfield, buff_recv_scalarfield]')
 #endif
 
-    real(wp), allocatable, dimension(:, :), public :: domain_glb
-    $:GPU_DECLARE(create='[domain_glb]')
-    !! This variables holds the physical locations of the global domain bounds
-
 contains
 
     !> Initialize the module.
@@ -219,7 +215,7 @@ contains
                                                      stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
 
         type(scalar_field), intent(in) :: filtered_fluid_indicator_function
-        type(vector_field), dimension(E_idx), intent(in) :: stat_q_cons_filtered
+        type(vector_field), dimension(eqn_idx%E), intent(in) :: stat_q_cons_filtered
         type(scalar_field), dimension(4), intent(in) :: stat_filtered_pressure
         type(vector_field), dimension(6), intent(in) :: stat_reynolds_stress
         type(vector_field), dimension(6), intent(in) :: stat_eff_visc
@@ -255,7 +251,7 @@ contains
                 MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_mom_exch_idx + (i - 1)*4 + (j - 1))%sf => stat_int_mom_exch(i)%vf(j)%sf(0:m, 0:n, 0:p)
             end do
         end do
-        do i = 1, E_idx
+        do i = 1, eqn_idx%E
             do j = 1, 4
                 MPI_IO_DATA%var(sys_size + volume_filter_dt%stat_cons_idx + (i - 1)*4 + (j - 1))%sf => stat_q_cons_filtered(i)%vf(j)%sf(0:m, 0:n, 0:p)
             end do
@@ -1845,36 +1841,6 @@ contains
     end subroutine s_mpi_sendrecv_grid_variables_buffers
 #endif
 
-    !> The goal of this subroutine is to get the physical global domain bounds
-#ifndef MFC_POST_PROCESS
-    impure subroutine s_mpi_global_domain_bounds
-        @:ALLOCATE(domain_glb(num_dims, 2))
-#ifdef MFC_MPI
-        call s_mpi_allreduce_min(x_domain%beg, domain_glb(1, 1))
-        call s_mpi_allreduce_max(x_domain%end, domain_glb(1, 2))
-        if (n > 0) then
-            call s_mpi_allreduce_min(y_domain%beg, domain_glb(2, 1))
-            call s_mpi_allreduce_max(y_domain%end, domain_glb(2, 2))
-            if (p > 0) then
-                call s_mpi_allreduce_min(z_domain%beg, domain_glb(3, 1))
-                call s_mpi_allreduce_max(z_domain%end, domain_glb(3, 2))
-            end if
-        end if
-#else
-        domain_glb(1, 1) = x_domain%beg
-        domain_glb(1, 2) = x_domain%end
-        if (n > 0) then
-            domain_glb(2, 1) = y_domain%beg
-            domain_glb(2, 2) = y_domain%end
-            if (p > 0) then
-                domain_glb(3, 1) = z_domain%beg
-                domain_glb(3, 2) = z_domain%end
-            end if
-        end if
-#endif
-    end subroutine s_mpi_global_domain_bounds
-#endif
-
     !> Module deallocation and/or disassociation procedures
     impure subroutine s_finalize_mpi_common_module
 
@@ -1886,9 +1852,6 @@ contains
             @:DEALLOCATE(buff_recv_scalarfield)
         end if
 #endif
-#endif
-#ifndef MFC_POST_PROCESS
-        @:DEALLOCATE(domain_glb)
 #endif
     end subroutine s_finalize_mpi_common_module
 
