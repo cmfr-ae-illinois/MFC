@@ -158,7 +158,9 @@ contains
 
         real(wp), dimension(3) :: norm               !< Normal vector from GP to IP
         real(wp), dimension(3) :: physical_loc       !< Physical loc of GP
+        real(wp), dimension(3) :: boundary_loc       !< physical loc of ib boundary
         real(wp), dimension(3) :: vel_g              !< Velocity of GP
+        real(wp), dimension(3) :: vel_w              !< velocity of ib boundary
         real(wp), dimension(3) :: radial_vector      !< vector from centroid to ghost point
         real(wp), dimension(3) :: rotation_velocity  !< speed of the ghost point due to rotation
         real(wp)               :: nbub
@@ -192,7 +194,7 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         if (num_gps > 0) then
-            $:GPU_PARALLEL_LOOP(private='[i, physical_loc, dyn_pres, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, vel_g, vel_norm_IP, &
+            $:GPU_PARALLEL_LOOP(private='[i, physical_loc, boundary_loc, dyn_pres, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, vel_g, vel_w, vel_norm_IP, &
                                 & r_IP, v_IP, pb_IP, mv_IP, nmom_IP, presb_IP, massv_IP, rho, gamma, pi_inf, Re_K, G_K, Gs, gp, &
                                 & innerp, norm, buf, radial_vector, rotation_velocity, j, k, l, q, qv_K, c_IP, nbub, patch_id]')
             do i = 1, num_gps
@@ -260,39 +262,69 @@ contains
                     end if
                 end if
 
-                ! Calculate velocity of ghost cell
-                if (gp%slip) then
-                    norm(1:3) = gp%levelset_norm
-                    buf = sqrt(sum(norm**2))
-                    norm = norm/buf
-                    vel_norm_IP = sum(vel_IP*norm)*norm
-                    vel_g = vel_IP - vel_norm_IP
-                    if (patch_ib(patch_id)%moving_ibm /= 0) then
-                        ! compute the linear velocity of the ghost point due to rotation
-                        radial_vector = physical_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, &
-                            & patch_ib(patch_id)%z_centroid]
-                        call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
+                ! ! Calculate velocity of ghost cell
+                ! if (gp%slip) then
+                !     norm(1:3) = gp%levelset_norm
+                !     buf = sqrt(sum(norm**2))
+                !     norm = norm/buf
+                !     vel_norm_IP = sum(vel_IP*norm)*norm
+                !     vel_g = vel_IP - vel_norm_IP
+                !     if (patch_ib(patch_id)%moving_ibm /= 0) then
+                !         ! compute the linear velocity of the ghost point due to rotation
+                !         radial_vector = physical_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, &
+                !             & patch_ib(patch_id)%z_centroid]
+                !         call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
 
-                        ! add only the component of the IB's motion that is normal to the surface
-                        vel_g = vel_g + sum((patch_ib(patch_id)%vel + rotation_velocity)*norm)*norm
-                    end if
+                !         ! add only the component of the IB's motion that is normal to the surface
+                !         vel_g = vel_g + sum((patch_ib(patch_id)%vel + rotation_velocity)*norm)*norm
+                !     end if
+                ! else
+                !     if (patch_ib(patch_id)%moving_ibm == 0) then
+                !         ! we know the object is not moving if moving_ibm is 0 (false)
+                !         vel_g = 0._wp
+                !         ! TEMP
+                !         vel_g = -vel_IP
+                !     else
+                !         ! get the vector that points from the centroid to the ghost
+                !         radial_vector = physical_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, &
+                !             & patch_ib(patch_id)%z_centroid]
+                !         ! convert the angular velocity from the inertial reference frame to the fluids frame, then convert to linear
+                !         ! velocity
+                !         call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
+                !         do q = 1, 3
+                !             ! if mibm is 1 or 2, then the boundary may be moving
+                !             vel_g(q) = patch_ib(patch_id)%vel(q)  ! add the linear velocity
+                !             vel_g(q) = vel_g(q) + rotation_velocity(q)  ! add the rotational velocity
+                !         end do
+                !     end if
+                ! end if
+
+                ! Calculate velocity of ghost cell
+                norm(1:3) = gp%levelset_norm(1:3)
+                buf = sqrt(sum(norm(1:3)**2))
+                norm(1:3) = norm(1:3)/buf
+
+                boundary_loc = physical_loc + abs(gp%levelset)*norm
+
+                ! Default fixed velocity
+                vel_w = 0._wp
+                rotation_velocity = 0._wp
+
+                ! Rigid-body wall velocity at the IB surface point
+                if (patch_ib(patch_id)%moving_ibm /= 0) then
+                    radial_vector = boundary_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, patch_ib(patch_id)%z_centroid]
+                    call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
+                    vel_w(1:3) = patch_ib(patch_id)%vel(1:3) + rotation_velocity(1:3)
+                end if
+
+                if (gp%slip) then
+                    ! Slip/no-penetration:
+                    ! Reflect only the normal component of velocity relative to the wall
+                    vel_g = vel_IP - 2._wp*sum((vel_IP - vel_w)*norm)*norm
                 else
-                    if (patch_ib(patch_id)%moving_ibm == 0) then
-                        ! we know the object is not moving if moving_ibm is 0 (false)
-                        vel_g = 0._wp
-                    else
-                        ! get the vector that points from the centroid to the ghost
-                        radial_vector = physical_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, &
-                            & patch_ib(patch_id)%z_centroid]
-                        ! convert the angular velocity from the inertial reference frame to the fluids frame, then convert to linear
-                        ! velocity
-                        call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
-                        do q = 1, 3
-                            ! if mibm is 1 or 2, then the boundary may be moving
-                            vel_g(q) = patch_ib(patch_id)%vel(q)  ! add the linear velocity
-                            vel_g(q) = vel_g(q) + rotation_velocity(q)  ! add the rotational velocity
-                        end do
-                    end if
+                    ! No-slip:
+                    ! Mirror the full velocity vector about the wall velocity
+                    vel_g = 2._wp*vel_w - vel_IP
                 end if
 
                 ! Set momentum

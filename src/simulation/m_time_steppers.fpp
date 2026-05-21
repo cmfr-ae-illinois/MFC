@@ -574,8 +574,9 @@ contains
         end if
 
         if (particle_control) then  ! update body force and pressure_infty
-            call s_update_controllers(t_step, q_cons_ts(1)%vf)
+            call s_update_controllers(t_step, q_cons_ts(1)%vf, q_prim_vf)
         end if
+        !print *, proc_rank, minval(q_prim_vf(1)%sf(0:m, 0:n, 0:p))
 
         ! Adaptive dt: final stage
         if (adap_dt) call s_adaptive_dt_bubble(3)

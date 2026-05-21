@@ -21,14 +21,16 @@ particle_vf = (N_s * vol_s) / (L**3)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 1.2
-Re = 500.0
+M = 0.6
+Re = 50.0
 
 P = 101325
 rho = 1.225
 
 v1 = M * np.sqrt(gam_a * P / rho) 
 mu = rho * v1 * D / Re
+
+v12 = v1#/2
 
 # control params
 CD = Osnes_CD(particle_vf, Re, M, gam_a)
@@ -40,7 +42,7 @@ tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
 Cg = 1.2; Cp = 1000.0
 
 K_Pg = -1.0/(Cg*tau_p)
-K_Dg = -0.9#-1.0/Cg
+K_Dg = -0.2
 K_Pp = -2.0*P/(Cp*M)
 
 #print('mu: ', mu)
@@ -48,13 +50,22 @@ K_Pp = -2.0*P/(Cp*M)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1.0E-06
-Nt = int(4 * L / v1 / dt)
-t_save = Nt//250
+dt = 6.0E-06
+Nt = int(12 * L / v1 / dt)
+t_save = Nt//100
 
-Nx = 127
+Nx = 63
 Ny = Nx
 Nz = Ny
+
+# print(f'CFL: {v1*dt/(L/(Nx+1))}')
+
+W = int(tau_p/dt)
+a = dt/tau_p
+b = K_Pg*dt
+
+#print(W, -2*W + a*W + b/2)
+W = 1
 
 # immersed boundary dictionary
 ib_dict = {}
@@ -63,6 +74,7 @@ ib_dict.update({
     f"patch_ib({1})%x_centroid": 0.0,
     f"patch_ib({1})%y_centroid": 0.0,
     f"patch_ib({1})%z_centroid": 0.0,
+    f"patch_ib({1})%vel(2)": -0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
     f"patch_ib({1})%moving_ibm": 2,
@@ -119,12 +131,12 @@ case_dict = {
     "riemann_solver": 2,
     "wave_speeds": 1,
     # periodic bc
-    "bc_x%beg": -1,
-    "bc_x%end": -1,
-    "bc_y%beg": -1,
-    "bc_y%end": -1,
-    "bc_z%beg": -1,
-    "bc_z%end": -1,
+    "bc_x%beg": -3,
+    "bc_x%end": -3,
+    "bc_y%beg": -3,
+    "bc_y%end": -3,
+    "bc_z%beg": -3,
+    "bc_z%end": -3,
     # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_s,
@@ -147,7 +159,7 @@ case_dict = {
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v1,
+    "patch_icpp(1)%vel(2)": v12,
     "patch_icpp(1)%vel(3)": 0.0e00,
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
@@ -159,8 +171,8 @@ case_dict = {
     "fluid_pp(1)%Re(1)": 1.0 / mu,
 
     # periodic forcing
-    "periodic_forcing": "T",
-    "u_inf_ref": v1,
+    "periodic_forcing": "F",
+    "u_inf_ref": v12,
     "rho_inf_ref": rho,
     "P_inf_ref": P,
     "mom_f_idx": 2,
@@ -175,11 +187,10 @@ case_dict = {
 
     "cntrl_p%Re_tgt": Re,
     "cntrl_p%M_tgt": M,
-    "cntrl_p%tau_p": tau_p,
     "cntrl_p%K_Pg": K_Pg,
     "cntrl_p%K_Dg": K_Dg,
     "cntrl_p%K_Pp": K_Pp,
-    "cntrl_p%window_size": 1,
+    "cntrl_p%window_size": W,
 
     }
 

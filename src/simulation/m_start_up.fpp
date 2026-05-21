@@ -955,7 +955,7 @@ contains
         if (hypoelasticity) call s_initialize_hypoelastic_module()
         if (hyperelasticity) call s_initialize_hyperelastic_module()
 
-        if (periodic_forcing) call s_initialize_additional_forcing_module()
+        if (periodic_forcing .or. particle_control) call s_initialize_additional_forcing_module()
 
     end subroutine s_initialize_modules
 
@@ -1149,7 +1149,7 @@ contains
         if (bodyForces) call s_finalize_body_forces_module()
         if (ib) call s_finalize_ibm_module()
 
-        if (periodic_forcing) then
+        if (periodic_forcing .or. particle_control) then
             call s_finalize_additional_forcing_module()
         end if
 

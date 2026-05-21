@@ -858,7 +858,7 @@ contains
 
         if (periodic_forcing) then
             call nvtxStartRange("COMPUTE-PERIODIC-FORCING")
-            call s_compute_periodic_forcing(rhs_vf, q_cons_vf, t_step)
+            call s_compute_periodic_forcing(rhs_vf, q_cons_qp%vf, q_prim_qp%vf, t_step)
             call nvtxEndRange
         end if
 

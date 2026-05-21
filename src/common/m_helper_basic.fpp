@@ -141,7 +141,7 @@ contains
         end if
 
         if (ib) then
-            buff_size = max(buff_size, 10)
+            buff_size = max(buff_size, 11)
         end if
 
         ! Configuring Coordinate Direction Indexes
