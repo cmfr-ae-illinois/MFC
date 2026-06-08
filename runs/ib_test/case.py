@@ -1,11 +1,6 @@
 import json
 import math
 import numpy as np
-from MFC_particle_forces import Osnes_CD
-
-# load initial sphere locations
-sphere_loc = np.loadtxt('sphere_array_locations.txt')
-N_s = len(sphere_loc)
 
 gam_a = 1.4
 
@@ -20,6 +15,7 @@ L = 10.0 * D
 rho_s = 10.0 
 vol_s = 4.0/3.0 * np.pi * R**3
 mass_s = rho_s * vol_s
+N_s = 2
 particle_vf = (N_s * vol_s) / (L**3) 
 fluid_vf = 1.0 - particle_vf
 
@@ -35,50 +31,44 @@ mu = rho * v1 * D / Re
 
 v12 = v1#/2
 
-# control params
-CD = Osnes_CD(particle_vf, Re, M, gam_a)
-drag = 0.5 * rho * v1**2 * np.pi * R**2 * CD
-g0 = drag / mass_s
-fRe = CD * Re / 24.0
-tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
-
-Cg = 1.2; Cp = 1000.0
-
-K_Pg = -1.0/(Cg*tau_p)
-K_Dg = -0.5 
-K_Pp = -2.0*P/(Cp*M)
-
 #print('mu: ', mu)
 #print('v1: ', v1)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1e-6
-t_final = 8 * L / v1
-t_save = t_final / 250
+dt = 6.0E-06
+Nt = 100 #int(12 * L / v1 / dt)
+t_save = 4 #Nt//100
 
 Nx = 127
 Ny = Nx
 Nz = Ny
 
-W = 1 #int(tau_p/dt)
-
-collision_time = 20.0 * dt
+# print(f'CFL: {v1*dt/(L/(Nx+1))}')
 
 # immersed boundary dictionary
 ib_dict = {}
-for i in range(N_s):
-  ib_dict.update({
-      f"patch_ib({i+1})%geometry": 8,
-      f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
-      f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
-      f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
-      f"patch_ib({i+1})%vel(2)": 0.0,
-      f"patch_ib({i+1})%radius": D / 2,
-      f"patch_ib({i+1})%slip": "F",
-      f"patch_ib({i+1})%moving_ibm": 0, #2
-      f"patch_ib({i+1})%mass": mass_s,
-      })
+ib_dict.update({
+    f"patch_ib({1})%geometry": 8,
+    f"patch_ib({1})%x_centroid": -0.055,
+    f"patch_ib({1})%y_centroid": 0.0,
+    f"patch_ib({1})%z_centroid": 0.0,
+    f"patch_ib({1})%vel(2)": -0.,
+    f"patch_ib({1})%radius": D / 2,
+    f"patch_ib({1})%slip": "F",
+    f"patch_ib({1})%moving_ibm": 0,
+    f"patch_ib({1})%mass": mass_s,
+
+    f"patch_ib({2})%geometry": 8,
+    f"patch_ib({2})%x_centroid": +0.055,
+    f"patch_ib({2})%y_centroid": 0.0,
+    f"patch_ib({2})%z_centroid": 0.0,
+    f"patch_ib({2})%vel(2)": -0.,
+    f"patch_ib({2})%radius": D / 2,
+    f"patch_ib({2})%slip": "F",
+    f"patch_ib({2})%moving_ibm": 0,
+    f"patch_ib({2})%mass": mass_s,
+    })
 
 # Configuring case dictionary
 case_dict = {
@@ -98,11 +88,10 @@ case_dict = {
     "m": Nx,
     "n": Ny,
     "p": Nz,
-    "cfl_const_dt": "T",
-    "cfl_target": 0.2, 
-    "n_start": 0,
-    "t_stop": t_final,
-    "t_save": t_save,  
+    "dt": dt,
+    "t_step_start": 0,
+    "t_step_stop": Nt,  
+    "t_step_save": t_save,  
     # Simulation Algorithm Parameters
     # Only one patches are necessary, the air tube
     "num_patches": 1,
@@ -121,21 +110,32 @@ case_dict = {
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
     "weno_order": 5,
-    "weno_eps": 1.0e-16,
+    "weno_eps": 1.0e-14,
     "weno_Re_flux": "T",
     "weno_avg": "T",
     "avg_state": 2,
+    "mapped_weno": "T",
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
     "wave_speeds": 1,
     # periodic bc
-    "bc_x%beg": -1,
-    "bc_x%end": -1,
-    "bc_y%beg": -1,
-    "bc_y%end": -1,
-    "bc_z%beg": -1,
-    "bc_z%end": -1,
+    "bc_x%beg": -3,
+    "bc_x%end": -3,
+    "bc_y%beg": -7, # -7, -11
+    "bc_y%end": -8, # -8, -12
+    "bc_z%beg": -3,
+    "bc_z%end": -3,
+
+    'bc_y%grcbc_in': "T", 
+    'bc_y%grcbc_out': "F", 
+    "bc_y%vel_in(1)": 0.0,
+    "bc_y%vel_in(2)": v12,
+    "bc_y%vel_in(3)": 0.0,
+    "bc_y%pres_in": P,
+    "bc_y%alpha_rho_in(1)": rho,
+    "bc_y%alpha_in(1)": 1.0,
+
     # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_s,
@@ -168,29 +168,6 @@ case_dict = {
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
-
-    # periodic forcing
-    "periodic_forcing": "T",
-    "u_inf_ref": v12,
-    "rho_inf_ref": rho,
-    "P_inf_ref": P,
-    "mom_f_idx": 2,
-    "forcing_window": 1,
-    "forcing_dt": 1.0/(2.0*dt),
-    "fluid_volume_fraction": fluid_vf,
-    "forcing_wrt": "T",
-
-    # controls
-    # "particle_control": "T",
-    # "particle_bf": -g0,
-
-    # "cntrl_p%Re_tgt": Re,
-    # "cntrl_p%M_tgt": M,
-    # "cntrl_p%K_Pg": K_Pg,
-    # "cntrl_p%K_Dg": K_Dg,
-    # "cntrl_p%K_Pp": K_Pp,
-    # "cntrl_p%window_size": W,
-
     }
 
 case_dict.update(ib_dict)

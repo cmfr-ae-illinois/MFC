@@ -54,7 +54,7 @@ t_save = Nt//400
 
 collision_time = 10.0 * dt
 
-Nx = 127
+Nx = 63
 Ny = Nx
 Nz = Ny
 

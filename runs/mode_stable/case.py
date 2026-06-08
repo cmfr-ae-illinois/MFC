@@ -21,8 +21,8 @@ particle_vf = (N_s * vol_s) / (L**3)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 0.6
-Re = 50.0
+M = 0.4
+Re = 10.0
 
 P = 101325
 rho = 1.225
@@ -42,7 +42,7 @@ tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
 Cg = 1.2; Cp = 1000.0
 
 K_Pg = -1.0/(Cg*tau_p)
-K_Dg = -0.2
+K_Dg = -0.4
 K_Pp = -2.0*P/(Cp*M)
 
 #print('mu: ', mu)
@@ -133,10 +133,20 @@ case_dict = {
     # periodic bc
     "bc_x%beg": -3,
     "bc_x%end": -3,
-    "bc_y%beg": -3,
-    "bc_y%end": -3,
+    "bc_y%beg": -7, # -7, -11
+    "bc_y%end": -8, # -8, -12
     "bc_z%beg": -3,
     "bc_z%end": -3,
+
+    'bc_y%grcbc_in': "T", 
+    'bc_y%grcbc_out': "F", 
+    "bc_y%vel_in(1)": 0.0,
+    "bc_y%vel_in(2)": v12,
+    "bc_y%vel_in(3)": 0.0,
+    "bc_y%pres_in": P,
+    "bc_y%alpha_rho_in(1)": rho,
+    "bc_y%alpha_in(1)": 1.0,
+
     # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_s,

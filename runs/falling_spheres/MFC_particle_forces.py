@@ -1,4 +1,5 @@
 import numpy as np 
+from scipy.special import erf
 
 def Loth_CD(Re, M, gamma):
     if (Re >= 45.0): # compression dominated regime

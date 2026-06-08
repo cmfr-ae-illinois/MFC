@@ -37,7 +37,7 @@ contains
         real(wp) :: domain_vol
 
         @:ALLOCATE(q_periodic_force(1:num_dims+2))
-        do i = 1, num_dims+2
+        do i = 1, num_dims + 2
             @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
             @:ACC_SETUP_SFs(q_periodic_force(i))
         end do
@@ -111,6 +111,7 @@ contains
         integer                                                :: i, j, k, l
 
         ! zero spatial averages
+
         spatial_rho = 0._wp
         spatial_rhou = 0._wp
         spatial_rhoe = 0._wp
@@ -118,8 +119,8 @@ contains
         $:GPU_UPDATE(device='[spatial_rho, spatial_rhou, spatial_rhoe]')
 
         ! compute spatial averages
-        $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoe]]', reductionOp='[+]', &
-                            & private='[l, rho, dVol]')
+        $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoe]]', reductionOp='[+]', private='[l, &
+                            & rho, dVol]')
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -130,8 +131,11 @@ contains
                         end do
                         dVol = dx(i)*dy(j)*dz(k)
                         spatial_rho = spatial_rho + (rho*dVol)  ! rho
-                        spatial_rhou = spatial_rhou + (q_cons_vf(eqn_idx%cont%end+mom_f_idx)%sf(i, j, k)*dVol)  ! rho*u
-                        spatial_rhoe = spatial_rhoe + ((q_cons_vf(eqn_idx%E)%sf(i, j, k) - 0.5_wp*rho*(q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k)**2 + q_prim_vf(eqn_idx%mom%beg+1)%sf(i, j, k)**2 + q_prim_vf(eqn_idx%mom%beg+2)%sf(i, j, k)**2))*dVol)  ! rho*e
+                        spatial_rhou = spatial_rhou + (q_cons_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k)*dVol)  ! rho*u
+                        spatial_rhoe = spatial_rhoe + ((q_cons_vf(eqn_idx%E)%sf(i, j, &
+                                                       & k) - 0.5_wp*rho*(q_prim_vf(eqn_idx%mom%beg)%sf(i, j, &
+                                                       & k)**2 + q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, &
+                                                       & k)**2 + q_prim_vf(eqn_idx%mom%beg + 2)%sf(i, j, k)**2))*dVol)  ! rho*e
                     end if
                 end do
             end do
@@ -179,7 +183,7 @@ contains
                     if (ib_markers%sf(i, j, k) == 0) then
                         rho = 0._wp
                         do l = 1, num_fluids
-                            rho = rho + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)
+                            rho = rho + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                         end do
                         ! continuity forcing
                         q_periodic_force(1)%sf(i, j, k) = (rho_inf_ref - phase_rho)*forcing_dt
@@ -187,15 +191,15 @@ contains
                         ! momentum forcing
                         f_rhou = (rho_inf_ref*u_inf_ref - phase_rhou)*forcing_dt
                         do l = 1, num_dims
-                            q_periodic_force(1+l)%sf(i, j, k) = q_prim_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k) 
+                            q_periodic_force(1 + l)%sf(i, j, k) = 0._wp !q_prim_vf(eqn_idx%mom%beg + l - 1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)
                         end do
 
-                        q_periodic_force(1+mom_f_idx)%sf(i, j, k) = q_periodic_force(1+mom_f_idx)%sf(i, j, k) + f_rhou
+                        q_periodic_force(1 + mom_f_idx)%sf(i, j, k) = q_periodic_force(1 + mom_f_idx)%sf(i, j, k) + f_rhou
 
                         ! energy forcing
-                        q_periodic_force(2+num_dims)%sf(i, j, k) = (P_inf_ref*gammas(1) - phase_rhoe)*forcing_dt &
-                                                        & + q_prim_vf(eqn_idx%mom%beg+mom_f_idx-1)%sf(i, j, k)*f_rhou & 
-                                                        & + q_cons_vf(eqn_idx%E)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho
+                        q_periodic_force(2 + num_dims)%sf(i, j, k) = (P_inf_ref*gammas(1) - phase_rhoe)*forcing_dt & 
+                            ! & + q_prim_vf(eqn_idx%mom%beg + mom_f_idx - 1)%sf(i, j, k)*f_rhou & 
+                            & + q_cons_vf(eqn_idx%E)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho
                     end if
                 end do
             end do
@@ -203,30 +207,30 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         ! add the forcing terms to the RHS
-        ! $:GPU_PARALLEL_LOOP(collapse=3, private='[l, rho]')
-        ! do i = 0, m
-        !     do j = 0, n
-        !         do k = 0, p
-        !             if (ib_markers%sf(i, j, k) == 0) then
-        !                 rho = 0._wp
-        !                 do l = 1, num_fluids
-        !                     rho = rho + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)
-        !                 end do
-        !                 do l = 1, num_fluids
-        !                     rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)/rho*q_periodic_force(1)%sf(i, j, k)  ! continuity
-        !                 end do
-        !                 do l = 1, num_dims
-        !                     rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) + q_periodic_force(1+l)%sf(i, j, k)  ! momentum
-        !                 end do
-        !                 rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(2+num_dims)%sf(i, j, k)  ! energy
-        !             end if
-        !         end do
-        !     end do
-        ! end do
-        ! $:END_GPU_PARALLEL_LOOP()
+        $:GPU_PARALLEL_LOOP(collapse=3, private='[l, rho]')
+        do i = 0, m
+            do j = 0, n
+                do k = 0, p
+                    if (ib_markers%sf(i, j, k) == 0) then
+                        rho = 0._wp
+                        do l = 1, num_fluids
+                            rho = rho + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)
+                        end do
+                        do l = 1, num_fluids
+                            rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho ! continuity
+                        end do
+                        do l = 1, num_dims
+                            rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) + q_periodic_force(1+l)%sf(i, j, k) ! momentum
+                        end do
+                        rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(2+num_dims)%sf(i, j, k) ! energy
+                    end if
+                end do
+            end do
+        end do
+        $:END_GPU_PARALLEL_LOOP()
 
         if (forcing_wrt .and. proc_rank == 0) then
-            !print *, 'FORCING:', spatial_rho_glb, spatial_rhou_glb, spatial_rhoe_glb
+            ! print *, 'FORCING:', spatial_rho_glb, spatial_rhou_glb, spatial_rhoe_glb
             write (102) spatial_rho_glb, spatial_rhou_glb, spatial_rhoe_glb
             flush (102)
         end if
@@ -270,11 +274,11 @@ contains
                     if (ib_markers%sf(i, j, k) == 0) then
                         rho = 0._wp
                         do l = 1, num_fluids
-                            rho = rho + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)
+                            rho = rho + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                         end do
                         dVol = dx(i)*dy(j)*dz(k)
                         rho_avg_loc = rho_avg_loc + (rho*dVol)
-                        rhou_avg_loc = rhou_avg_loc + (q_cons_vf(eqn_idx%mom%beg+mom_f_idx-1)%sf(i, j, k)*dVol)
+                        rhou_avg_loc = rhou_avg_loc + (q_cons_vf(eqn_idx%mom%beg + mom_f_idx - 1)%sf(i, j, k)*dVol)
                         pres = q_prim_vf(eqn_idx%E)%sf(i, j, k)
                         cs_avg_loc = cs_avg_loc + (sqrt(gamma*pres/rho)*dVol)
                     end if
@@ -307,9 +311,9 @@ contains
 
         if (wdw_fill_cntrl < cntrl_p%window_size) wdw_fill_cntrl = wdw_fill_cntrl + 1
 
-        ! rho_avg = rho_sum_cntrl/real(wdw_fill_cntrl, wp)
-        ! u_avg = u_sum_cntrl/real(wdw_fill_cntrl, wp)
-        ! cs_avg = cs_sum_cntrl/real(wdw_fill_cntrl, wp)
+        rho_avg = rho_sum_cntrl/real(wdw_fill_cntrl, wp)
+        u_avg = u_sum_cntrl/real(wdw_fill_cntrl, wp)
+        cs_avg = cs_sum_cntrl/real(wdw_fill_cntrl, wp)
         Vp_avg = Vp_sum_cntrl/real(wdw_fill_cntrl, wp)
         ! done time averaging
 
@@ -326,9 +330,9 @@ contains
         err_u_hist(3) = err_u_hist(4)
         err_u_hist(4) = err_u
         if (t_step > 3) then
-            ! d_err_u = (err_u_hist(4) - err_u_hist(3))/dt 
-            ! d_err_u = (1.5_wp*err_u_hist(4) - 2._wp*err_u_hist(3) + 0.5_wp*err_u_hist(2))/dt
-            d_err_u = (11._wp*err_u_hist(4) - 18._wp*err_u_hist(3) + 9._wp*err_u_hist(2) - 2._wp*err_u_hist(1))/(6._wp*dt)
+            ! d_err_u = (err_u_hist(4) - err_u_hist(3))/dt
+            d_err_u = (1.5_wp*err_u_hist(4) - 2._wp*err_u_hist(3) + 0.5_wp*err_u_hist(2))/dt
+            ! d_err_u = (11._wp*err_u_hist(4) - 18._wp*err_u_hist(3) + 9._wp*err_u_hist(2) - 2._wp*err_u_hist(1))/(6._wp*dt)
         else
             d_err_u = 0._wp
         end if
@@ -336,12 +340,12 @@ contains
         particle_bf = particle_bf + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*d_err_u
         P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M
 
-        if (t_step == 2500) then
-            particle_bf = particle_bf * 1.5_wp ! perturb
+        if (t_step == 800) then
+            particle_bf = particle_bf*2._wp  ! perturb
         end if
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, cntrl_p%window_size
+            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, rho_avg, u_avg, cs_avg
             write (103) particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
             flush (103)
         end if
@@ -352,7 +356,7 @@ contains
 
         integer :: i
 
-        do i = 1, num_dims+2
+        do i = 1, num_dims + 2
             @:DEALLOCATE(q_periodic_force(i)%sf)
         end do
         @:DEALLOCATE(q_periodic_force)

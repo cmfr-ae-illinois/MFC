@@ -167,6 +167,16 @@ contains
         real(wp)               :: buf
         type(ghost_point)      :: gp
         type(ghost_point)      :: innerp
+        logical                :: gp_default
+        integer  :: donor_id
+        integer  :: jd, kd, ld
+        integer  :: search_radius, max_donor_radius
+        integer  :: grid_dist
+        real(wp) :: w_sum, w, r2
+        logical  :: donor_found
+        logical  :: gp_error
+
+        gp_error = .false.
 
         ! set the Moving IBM interior conservative variables
 
@@ -194,9 +204,10 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         if (num_gps > 0) then
-            $:GPU_PARALLEL_LOOP(private='[i, physical_loc, boundary_loc, dyn_pres, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, vel_g, vel_w, vel_norm_IP, &
-                                & r_IP, v_IP, pb_IP, mv_IP, nmom_IP, presb_IP, massv_IP, rho, gamma, pi_inf, Re_K, G_K, Gs, gp, &
-                                & innerp, norm, buf, radial_vector, rotation_velocity, j, k, l, q, qv_K, c_IP, nbub, patch_id]')
+            $:GPU_PARALLEL_LOOP(private='[i, physical_loc, boundary_loc, dyn_pres, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, &
+                                & vel_g, vel_w, vel_norm_IP, r_IP, v_IP, pb_IP, mv_IP, nmom_IP, presb_IP, massv_IP, rho, gamma, &
+                                & pi_inf, Re_K, G_K, Gs, gp, innerp, norm, buf, radial_vector, rotation_velocity, j, k, l, q, &
+                                & qv_K, c_IP, nbub, patch_id, gp_default]')
             do i = 1, num_gps
                 gp = ghost_points(i)
                 j = gp%loc(1)
@@ -213,17 +224,21 @@ contains
 
                 ! Interpolate primitive variables at image point associated w/ GP
                 if (bubbles_euler .and. .not. qbmm) then
-                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, r_IP, v_IP, &
+                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, gp_default, r_IP, v_IP, &
                                                    & pb_IP, mv_IP)
                 else if (qbmm .and. polytropic) then
-                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, r_IP, v_IP, &
+                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, gp_default, r_IP, v_IP, &
                                                    & pb_IP, mv_IP, nmom_IP)
                 else if (qbmm .and. .not. polytropic) then
-                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, r_IP, v_IP, &
+                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, gp_default, r_IP, v_IP, &
                                                    & pb_IP, mv_IP, nmom_IP, pb_in, mv_in, presb_IP, massv_IP)
                 else
-                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP)
+                    call s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, gp_default)
                 end if
+
+                ghost_points(i)%gp_default = gp_default
+
+                if (gp_default) cycle
 
                 dyn_pres = 0._wp
 
@@ -282,13 +297,11 @@ contains
                 !     if (patch_ib(patch_id)%moving_ibm == 0) then
                 !         ! we know the object is not moving if moving_ibm is 0 (false)
                 !         vel_g = 0._wp
-                !         ! TEMP
-                !         vel_g = -vel_IP
                 !     else
                 !         ! get the vector that points from the centroid to the ghost
                 !         radial_vector = physical_loc - [patch_ib(patch_id)%x_centroid, patch_ib(patch_id)%y_centroid, &
                 !             & patch_ib(patch_id)%z_centroid]
-                !         ! convert the angular velocity from the inertial reference frame to the fluids frame, then convert to linear
+                ! ! convert the angular velocity from the inertial reference frame to the fluids frame, then convert to linear
                 !         ! velocity
                 !         call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
                 !         do q = 1, 3
@@ -299,6 +312,7 @@ contains
                 !     end if
                 ! end if
 
+                !!!
                 ! Calculate velocity of ghost cell
                 norm(1:3) = gp%levelset_norm(1:3)
                 buf = sqrt(sum(norm(1:3)**2))
@@ -318,18 +332,18 @@ contains
                 end if
 
                 if (gp%slip) then
-                    ! Slip/no-penetration:
-                    ! Reflect only the normal component of velocity relative to the wall
+                    ! Slip/no-penetration: Reflect only the normal component of velocity relative to the wall
                     vel_g = vel_IP - 2._wp*sum((vel_IP - vel_w)*norm)*norm
                 else
-                    ! No-slip:
-                    ! Mirror the full velocity vector about the wall velocity
+                    ! No-slip: Mirror the full velocity vector about the wall velocity
                     vel_g = 2._wp*vel_w - vel_IP
                 end if
+                !!!
 
                 ! Set momentum
                 $:GPU_LOOP(parallelism='[seq]')
                 do q = eqn_idx%mom%beg, eqn_idx%mom%end
+                    q_prim_vf(q)%sf(j, k, l) = vel_g(q - eqn_idx%mom%beg + 1)
                     q_cons_vf(q)%sf(j, k, l) = rho*vel_g(q - eqn_idx%mom%beg + 1)
                     dyn_pres = dyn_pres + q_cons_vf(q)%sf(j, k, l)*vel_g(q - eqn_idx%mom%beg + 1)/2._wp
                 end do
@@ -402,7 +416,178 @@ contains
                 end if
             end do
             $:END_GPU_PARALLEL_LOOP()
+
+
+            max_donor_radius = 4
+
+            $:GPU_PARALLEL_LOOP(private='[i, donor_id, j, k, l, jd, kd, ld, q, search_radius, grid_dist, &
+                                        & w_sum, w, r2, donor_found, gp, patch_id, alpha_rho_IP, alpha_IP, &
+                                        & pres_IP, vel_g, c_IP, rho, gamma, pi_inf, Re_K, G_K, Gs, qv_K, &
+                                        & dyn_pres, nbub]', copyin='[max_donor_radius]', copy='[gp_error]')
+            do i = 1, num_gps
+
+                gp = ghost_points(i)
+
+                if (gp%gp_default) then
+
+                    j = gp%loc(1)
+                    k = gp%loc(2)
+                    l = gp%loc(3)
+                    patch_id = gp%ib_patch_id
+
+                    donor_found = .false.
+
+                    do search_radius = 1, max_donor_radius
+
+                        w_sum = 0._wp
+                        pres_IP = 0._wp
+                        vel_g = 0._wp
+                        alpha_rho_IP = 0._wp
+                        alpha_IP = 0._wp
+                        if (surface_tension) c_IP = 0._wp
+
+                        do donor_id = 1, num_gps
+
+                            if (donor_id == i) cycle
+
+                            ! donor must be a successfully corrected GP
+                            if (ghost_points(donor_id)%gp_default) cycle
+
+                            ! donor must belong to the same immersed boundary
+                            if (ghost_points(donor_id)%ib_patch_id /= patch_id) cycle
+
+                            jd = ghost_points(donor_id)%loc(1)
+                            kd = ghost_points(donor_id)%loc(2)
+                            ld = ghost_points(donor_id)%loc(3)
+
+                            grid_dist = max(abs(jd - j), abs(kd - k))
+                            if (p /= 0) grid_dist = max(grid_dist, abs(ld - l))
+
+                            if (grid_dist > search_radius) cycle
+
+                            r2 = (x_cc(jd) - x_cc(j))**2 + (y_cc(kd) - y_cc(k))**2
+
+                            if (p /= 0) then
+                                r2 = r2 + (z_cc(ld) - z_cc(l))**2
+                            end if
+
+                            w = 1._wp/max(r2, 1.e-16_wp)
+
+                            ! average primitive state from donor ghost point
+                            pres_IP = pres_IP + w*q_prim_vf(eqn_idx%E)%sf(jd, kd, ld)
+
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do q = eqn_idx%mom%beg, eqn_idx%mom%end
+                                vel_g(q - eqn_idx%mom%beg + 1) = vel_g(q - eqn_idx%mom%beg + 1) &
+                                    + w*q_prim_vf(q)%sf(jd, kd, ld)
+                            end do
+
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do q = 1, num_fluids
+                                alpha_rho_IP(q) = alpha_rho_IP(q) + w*q_prim_vf(q)%sf(jd, kd, ld)
+                                alpha_IP(q) = alpha_IP(q) &
+                                    + w*q_prim_vf(eqn_idx%adv%beg + q - 1)%sf(jd, kd, ld)
+                            end do
+
+                            if (surface_tension) then
+                                c_IP = c_IP + w*q_prim_vf(eqn_idx%c)%sf(jd, kd, ld)
+                            end if
+
+                            w_sum = w_sum + w
+
+                        end do
+
+                        if (w_sum > 0._wp) then
+                            donor_found = .true.
+
+                            pres_IP = pres_IP/w_sum
+                            vel_g = vel_g/w_sum
+                            alpha_rho_IP = alpha_rho_IP/w_sum
+                            alpha_IP = alpha_IP/w_sum
+
+                            if (surface_tension) then
+                                c_IP = c_IP/w_sum
+                            end if
+                            exit
+                        end if
+                    end do
+
+                    if (donor_found) then
+                        ! write primitive state at the GP
+                        $:GPU_LOOP(parallelism='[seq]')
+                        do q = 1, num_fluids
+                            q_prim_vf(q)%sf(j, k, l) = alpha_rho_IP(q)
+                            q_prim_vf(eqn_idx%adv%beg + q - 1)%sf(j, k, l) = alpha_IP(q)
+                        end do
+
+                        q_prim_vf(eqn_idx%E)%sf(j, k, l) = pres_IP
+
+                        $:GPU_LOOP(parallelism='[seq]')
+                        do q = eqn_idx%mom%beg, eqn_idx%mom%end
+                            q_prim_vf(q)%sf(j, k, l) = vel_g(q - eqn_idx%mom%beg + 1)
+                        end do
+
+                        if (surface_tension) then
+                            q_prim_vf(eqn_idx%c)%sf(j, k, l) = c_IP
+                        end if
+
+                        ! compute mixture variables from averaged primitive state
+                        if (model_eqns /= 4) then
+                            if (elasticity) then
+                                call s_convert_species_to_mixture_variables_acc(rho, gamma, pi_inf, qv_K, alpha_IP, &
+                                    & alpha_rho_IP, Re_K, G_K, Gs)
+                            else
+                                call s_convert_species_to_mixture_variables_acc(rho, gamma, pi_inf, qv_K, alpha_IP, &
+                                    & alpha_rho_IP, Re_K)
+                            end if
+                        end if
+
+                        ! reconstruct conservative state 
+                        dyn_pres = 0._wp
+
+                        $:GPU_LOOP(parallelism='[seq]')
+                        do q = eqn_idx%mom%beg, eqn_idx%mom%end
+                            q_cons_vf(q)%sf(j, k, l) = rho*vel_g(q - eqn_idx%mom%beg + 1)
+                            dyn_pres = dyn_pres + q_cons_vf(q)%sf(j, k, l) &
+                                *vel_g(q - eqn_idx%mom%beg + 1)/2._wp
+                        end do
+
+                        $:GPU_LOOP(parallelism='[seq]')
+                        do q = 1, num_fluids
+                            q_cons_vf(q)%sf(j, k, l) = alpha_rho_IP(q)
+                            q_cons_vf(eqn_idx%adv%beg + q - 1)%sf(j, k, l) = alpha_IP(q)
+                        end do
+
+                        if (surface_tension) then
+                            q_cons_vf(eqn_idx%c)%sf(j, k, l) = c_IP
+                        end if
+
+                        if (bubbles_euler) then
+                            q_cons_vf(eqn_idx%E)%sf(j, k, l) = &
+                                (1._wp - alpha_IP(1))*(gamma*pres_IP + pi_inf + dyn_pres)
+                        else
+                            q_cons_vf(eqn_idx%E)%sf(j, k, l) = gamma*pres_IP + pi_inf + dyn_pres
+                        end if
+
+                        if (model_eqns == 3) then
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do q = eqn_idx%int_en%beg, eqn_idx%int_en%end
+                                q_cons_vf(q)%sf(j, k, l) = &
+                                    alpha_IP(q - eqn_idx%int_en%beg + 1) &
+                                    *(gammas(q - eqn_idx%int_en%beg + 1)*pres_IP &
+                                    + pi_infs(q - eqn_idx%int_en%beg + 1))
+                            end do
+                        end if
+
+                    else
+                        gp_error = .true.
+                    end if
+                end if
+            end do
+            $:END_GPU_PARALLEL_LOOP()
         end if
+
+        if (gp_error) error stop "No valid values found for ghost/image point. Exiting"
 
     end subroutine s_ibm_correct_state
 
@@ -656,10 +841,14 @@ contains
         integer                                              :: q, i, j, k, ii, jj, kk  !< Grid indexes and iterators
         integer                                              :: patch_id
         logical                                              :: is_cell_center
+        logical                                              :: ip_valid
 
-        $:GPU_PARALLEL_LOOP(private='[q, i, j, k, ii, jj, kk, dist, buf, gp, interp_coeffs, eta, alpha, patch_id, is_cell_center]')
+        $:GPU_PARALLEL_LOOP(private='[q, i, j, k, ii, jj, kk, dist, buf, gp, interp_coeffs, eta, alpha, patch_id, is_cell_center, ip_valid]')
         do q = 1, num_gps
             gp = ghost_points_in(q)
+            
+            ip_valid = .true.
+
             ! Get the interpolation points
             i = gp%ip_grid(1)
             j = gp%ip_grid(2)
@@ -692,15 +881,19 @@ contains
             check_is_cell_center: do ii = 0, 1
                 do jj = 0, 1
                     if (dist(ii + 1, jj + 1, 1) <= 1.e-16_wp) then
-                        interp_coeffs(ii + 1, jj + 1, 1) = 1._wp
-                        is_cell_center = .true.
-                        exit check_is_cell_center
+                        if (ib_markers%sf(i + ii, j + jj, k) == 0) then
+                            interp_coeffs(ii + 1, jj + 1, 1) = 1._wp
+                            is_cell_center = .true.
+                            exit check_is_cell_center
+                        end if
                     else
                         if (p /= 0) then
                             if (dist(ii + 1, jj + 1, 2) <= 1.e-16_wp) then
-                                interp_coeffs(ii + 1, jj + 1, 2) = 1._wp
-                                is_cell_center = .true.
-                                exit check_is_cell_center
+                                if (ib_markers%sf(i + ii, j + jj, k + 1) == 0) then
+                                    interp_coeffs(ii + 1, jj + 1, 2) = 1._wp
+                                    is_cell_center = .true.
+                                    exit check_is_cell_center
+                                end if
                             end if
                         end if
                     end if
@@ -717,31 +910,52 @@ contains
                 if (ib_markers%sf(i + 1, j + 1, k) /= 0) alpha(2, 2, 1) = 0._wp
 
                 if (p == 0) then
-                    eta(:,:,1) = 1._wp/dist(:,:,1)**2
-                    buf = sum(alpha(:,:,1)*eta(:,:,1))
+                    eta = 0._wp
+                    buf = 0._wp
+                    do ii = 0, 1
+                        do jj = 0, 1
+                            if (alpha(ii + 1, jj + 1, 1) > 0._wp) then
+                                eta(ii + 1, jj + 1, 1) = 1._wp/max(dist(ii + 1, jj + 1, 1)**2, 1.e-16_wp)
+                                buf = buf + eta(ii + 1, jj + 1, 1)
+                            end if
+                        end do
+                    end do
+
                     if (buf > 0._wp) then
                         interp_coeffs(:,:,1) = alpha(:,:,1)*eta(:,:,1)/buf
                     else
-                        buf = sum(eta(:,:,1))
-                        interp_coeffs(:,:,1) = eta(:,:,1)/buf
+                        ip_valid = .false. ! invalid gp location
+                        interp_coeffs(:,:,1) = 0._wp
                     end if
                 else
                     if (ib_markers%sf(i, j, k + 1) /= 0) alpha(1, 1, 2) = 0._wp
                     if (ib_markers%sf(i + 1, j, k + 1) /= 0) alpha(2, 1, 2) = 0._wp
                     if (ib_markers%sf(i, j + 1, k + 1) /= 0) alpha(1, 2, 2) = 0._wp
                     if (ib_markers%sf(i + 1, j + 1, k + 1) /= 0) alpha(2, 2, 2) = 0._wp
-                    eta = 1._wp/dist**2
-                    buf = sum(alpha*eta)
+
+                    eta = 0._wp
+                    buf = 0._wp
+                    do ii = 0, 1
+                        do jj = 0, 1
+                            do kk = 0, 1
+                                if (alpha(ii + 1, jj + 1, kk + 1) > 0._wp) then
+                                    eta(ii + 1, jj + 1, kk + 1) = 1._wp/max(dist(ii + 1, jj + 1, kk + 1)**2, 1.e-16_wp)
+                                    buf = buf + eta(ii + 1, jj + 1, kk + 1)
+                                end if
+                            end do
+                        end do
+                    end do
 
                     if (buf > 0._wp) then
                         interp_coeffs = alpha*eta/buf
                     else
-                        buf = sum(eta)
-                        interp_coeffs = eta/buf
+                        ip_valid = .false. ! invalid gp location
+                        interp_coeffs = 0._wp
                     end if
                 end if
             end if
 
+            ghost_points_in(q)%ip_valid = ip_valid
             ghost_points_in(q)%interp_coeffs = interp_coeffs
         end do
         $:END_GPU_PARALLEL_LOOP()
@@ -749,7 +963,7 @@ contains
     end subroutine s_compute_interpolation_coeffs
 
     !> Interpolate primitive variables to a ghost point's image point using bilinear or trilinear interpolation
-    subroutine s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, r_IP, v_IP, pb_IP, mv_IP, &
+    subroutine s_interpolate_image_point(q_prim_vf, gp, alpha_rho_IP, alpha_IP, pres_IP, vel_IP, c_IP, gp_default, r_IP, v_IP, pb_IP, mv_IP, &
 
         & nmom_IP, pb_in, mv_in, presb_IP, massv_IP)
         $:GPU_ROUTINE(parallelism='[seq]')
@@ -771,6 +985,14 @@ contains
         integer                                         :: i1, i2, j1, j2, k1, k2  !< Iterator variables
         real(wp)                                        :: coeff
 
+        real(wp)                                        :: eta
+        real(wp)                                        :: buf
+        real(wp)                                        :: r2
+        real(wp), dimension(4, 4, 4)                    :: fallback_coeffs         !< invalid image point fallback coefficients
+        logical, intent(out)                            :: gp_default
+
+        gp_default = .false. 
+        
         i1 = gp%ip_grid(1); i2 = i1 + 1
         j1 = gp%ip_grid(2); j2 = j1 + 1
         k1 = gp%ip_grid(3); k2 = k1 + 1
@@ -778,6 +1000,44 @@ contains
         if (p == 0) then
             k1 = 0
             k2 = 0
+        end if
+
+        if (.not. gp%ip_valid) then ! search for valid fluid point
+            i1 = i1 - 1; i2 = i2 + 1
+            j1 = j1 - 1; j2 = j2 + 1
+            k1 = k1 - 1; k2 = k2 + 1
+            if (p == 0) then
+                k1 = 0
+                k2 = 0
+            end if
+            
+            fallback_coeffs = 0._wp
+            buf = 0._wp
+
+            do i = i1, i2
+                do j = j1, j2
+                    do k = k1, k2
+                        if (ib_markers%sf(i,j,k) == 0) then
+                            r2 = (x_cc(i) - gp%ip_loc(1))**2 + (y_cc(j) - gp%ip_loc(2))**2
+
+                            if (p /= 0) then
+                                r2 = r2 + (z_cc(k) - gp%ip_loc(3))**2
+                            end if
+
+                            eta = 1._wp/max(r2, 1.e-16_wp)
+                            fallback_coeffs(i - i1 + 1, j - j1 + 1, k - k1 + 1) = eta
+                            buf = buf + eta
+                        end if
+                    end do
+                end do
+            end do
+
+            if (buf > 0._wp) then
+                fallback_coeffs = fallback_coeffs / buf
+            else
+                gp_default = .true.
+                return
+            end if
         end if
 
         alpha_rho_IP = 0._wp
@@ -810,7 +1070,11 @@ contains
             do j = j1, j2
                 $:GPU_LOOP(parallelism='[seq]')
                 do k = k1, k2
-                    coeff = gp%interp_coeffs(i - i1 + 1, j - j1 + 1, k - k1 + 1)
+                    if (gp%ip_valid) then
+                        coeff = gp%interp_coeffs(i - i1 + 1, j - j1 + 1, k - k1 + 1)
+                    else
+                        coeff = fallback_coeffs(i - i1 + 1, j - j1 + 1, k - k1 + 1)
+                    end if
 
                     pres_IP = pres_IP + coeff*q_prim_vf(eqn_idx%E)%sf(i, j, k)
 
