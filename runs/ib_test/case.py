@@ -37,7 +37,7 @@ v12 = v1#/2
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 6.0E-06
-Nt = 100 #int(12 * L / v1 / dt)
+Nt = 40 #int(12 * L / v1 / dt)
 t_save = 4 #Nt//100
 
 Nx = 127
@@ -50,7 +50,7 @@ Nz = Ny
 ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": -0.055,
+    f"patch_ib({1})%x_centroid": -0.051,
     f"patch_ib({1})%y_centroid": 0.0,
     f"patch_ib({1})%z_centroid": 0.0,
     f"patch_ib({1})%vel(2)": -0.,
@@ -60,7 +60,7 @@ ib_dict.update({
     f"patch_ib({1})%mass": mass_s,
 
     f"patch_ib({2})%geometry": 8,
-    f"patch_ib({2})%x_centroid": +0.055,
+    f"patch_ib({2})%x_centroid": +0.051,
     f"patch_ib({2})%y_centroid": 0.0,
     f"patch_ib({2})%z_centroid": 0.0,
     f"patch_ib({2})%vel(2)": -0.,

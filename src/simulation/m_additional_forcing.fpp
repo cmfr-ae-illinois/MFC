@@ -118,6 +118,22 @@ contains
 
         $:GPU_UPDATE(device='[spatial_rho, spatial_rhou, spatial_rhoe]')
 
+        ! NaN check before computing spatial averages
+        do i = 1, sys_size
+            do l = 0, p
+                do k = 0, n
+                    do j = 0, m
+                        if (ieee_is_nan(real(q_cons_vf(i)%sf(j, k, l), kind=wp))) then
+                            print *, "NaN(s) in q_cons_vf", i, j, k, l, proc_rank, t_step, m, n, p, ib_markers%sf(j, k, l)
+                        end if
+                        if (ieee_is_nan(real(q_prim_vf(i)%sf(j, k, l), kind=wp))) then
+                            print *, "NaN(s) in q_prim_vf", i, j, k, l, proc_rank, t_step, m, n, p, ib_markers%sf(j, k, l)
+                        end if
+                    end do
+                end do
+            end do
+        end do
+
         ! compute spatial averages
         $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoe]]', reductionOp='[+]', private='[l, &
                             & rho, dVol]')
@@ -219,15 +235,28 @@ contains
                         do l = 1, num_fluids
                             rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho ! continuity
                         end do
-                        do l = 1, num_dims
-                            rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) + q_periodic_force(1+l)%sf(i, j, k) ! momentum
-                        end do
                         rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(2+num_dims)%sf(i, j, k) ! energy
                     end if
                 end do
             end do
         end do
         $:END_GPU_PARALLEL_LOOP()
+        
+        if (t_step > forcing_start) then
+            $:GPU_PARALLEL_LOOP(collapse=3, private='[l]')
+            do i = 0, m
+                do j = 0, n
+                    do k = 0, p
+                        if (ib_markers%sf(i, j, k) == 0) then
+                            do l = 1, num_dims
+                                rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) + q_periodic_force(1+l)%sf(i, j, k) ! momentum
+                            end do
+                        end if
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+        end if
 
         if (forcing_wrt .and. proc_rank == 0) then
             ! print *, 'FORCING:', spatial_rho_glb, spatial_rhou_glb, spatial_rhoe_glb

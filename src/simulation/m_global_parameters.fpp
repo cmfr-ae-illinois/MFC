@@ -480,6 +480,7 @@ module m_global_parameters
     $:GPU_DECLARE(create='[hyper_cleaning_speed, hyper_cleaning_tau]')
 
     logical              :: periodic_forcing
+    integer              :: forcing_start
     integer              :: mom_f_idx
     real(wp)             :: fluid_volume_fraction
     real(wp)             :: forcing_dt
@@ -848,6 +849,7 @@ contains
         end do
 
         periodic_forcing = .false.
+        forcing_start = 0
         mom_f_idx = dflt_int
         fluid_volume_fraction = dflt_real
         forcing_dt = dflt_real

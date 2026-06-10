@@ -3,62 +3,87 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import freud
+from scipy.spatial import ConvexHull, QhullError
 
 
-# lloyd relaxation
-def compute_tetrahedron_centroid(tetrahedron_vertices):
+def compute_tetrahedron_centroid(v0, v1, v2, v3):
+    return 0.25 * (v0 + v1 + v2 + v3)
+
+
+def compute_tetrahedron_signed_volume(v0, v1, v2, v3):
+    return np.dot(v1 - v0, np.cross(v2 - v0, v3 - v0)) / 6.0
+
+
+def compute_polyhedron_centroid_from_vertices(cell_vertices, interior_point):
     
-    return np.mean(tetrahedron_vertices, axis=0)
+    hull = ConvexHull(cell_vertices)
 
-def compute_tetrahedron_volume(tetrahedron_vertices):
-    v0, v1, v2, v3 = tetrahedron_vertices
-    matrix = np.vstack([v1 - v0, v2 - v0, v3 - v0]).T
-    volume = np.abs(np.linalg.det(matrix)) / 6
+    total_volume = 0.0
+    weighted_centroid = np.zeros(3)
 
-    return volume
+    for simplex in hull.simplices:
+        v1, v2, v3 = cell_vertices[simplex]
 
-def lloyd_relaxation_3d(initial_points, box, w=1, iterations=10):
-    points = initial_points
+        signed_volume = compute_tetrahedron_signed_volume(interior_point, v1, v2, v3)
+
+        volume = abs(signed_volume)
+
+        if (volume <= 1.0e-15):
+            continue
+
+        centroid = compute_tetrahedron_centroid(interior_point, v1, v2, v3)
+
+        weighted_centroid += volume * centroid
+        total_volume += volume
+
+    if (total_volume <= 1.0e-15):
+        raise ValueError("Degenerate Voronoi cell with zero volume")
+
+    return weighted_centroid / total_volume, total_volume
+
+
+def lloyd_relaxation_3d(initial_points, box, w=1.0, iterations=10):
+    points = box.wrap(np.asarray(initial_points, dtype=np.float64).copy())
 
     for _ in range(iterations):
         voro = freud.locality.Voronoi()
-        voro_data = voro.compute((box, points))
-        vertices = voro_data.polytopes
+        voro.compute((box, points))
+
+        cell_vertices_all = voro.polytopes
+        new_points = points.copy()
 
         for i in range(len(points)):
-            n = len(vertices[i])
+            site = points[i, :]
+            rel_vertices = box.wrap(cell_vertices_all[i] - site)
+            cell_vertices = site + rel_vertices
 
-            tetrahedra = []
-            for j in range(n):
-                tetrahedra.append([points[i, :], vertices[i][j], vertices[i][(j+1) % n], vertices[i][(j+2) % n]])
+            try:
+                centroid, cell_volume = compute_polyhedron_centroid_from_vertices(cell_vertices, site)
 
-            centroids = np.array([compute_tetrahedron_centroid(t) for t in tetrahedra])
-            volumes = np.array([compute_tetrahedron_volume(t) for t in tetrahedra])
+            except (QhullError, ValueError):
+                print(f"Warning: could not compute centroid for cell {i}")
+                continue
 
-            weighted_centroid = np.sum(centroids * volumes[:, np.newaxis], axis=0)
-            total_volume = np.sum(volumes)
+            # periodic displacement from site to centroid.
+            disp = box.wrap(centroid - site)
 
-            if total_volume > 1.0e-12:
-                centroid = weighted_centroid / total_volume
-                dist = centroid - points[i, :]
+            new_points[i, :] = site + w * disp
 
-                points[i, :] += w * dist
-
-        points = box.wrap(points)
+        points = box.wrap(new_points)
 
     return points
+
 
 if (__name__ == '__main__'): 
     print('running 3D...')
 
     # setup 
-    phi = 0.1
-    str_phi = '01'
+    phi = 0.05
 
     D = 0.1
     L = 10*D
 
-    output_dir = '../runs/phi'+str_phi
+    output_dir = '../runs/moving_particle_array'
     if os.path.exists(output_dir) == False:
         os.mkdir(output_dir)
 
@@ -73,19 +98,35 @@ if (__name__ == '__main__'):
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
     box = freud.box.Box.cube(L)
     
-    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=40)
+    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=25)
     print(np.shape(relaxed_points))
 
     np.savetxt(output_dir+'/sphere_array_locations.txt', relaxed_points)
 
-    # check no spheres are overlapping
+    # check no spheres are overlapping, including periodic images
+    min_dist = L
+    overlap_tol = 1.05 * D
+
     for i in range(N_sphere):
-        for j in range(N_sphere):
-            if (i != j):
-                dist = np.sqrt((relaxed_points[i, 0] - relaxed_points[j, 0])**2 + (relaxed_points[i, 1] - relaxed_points[j, 1])**2 + (relaxed_points[i, 2] - relaxed_points[j, 2])**2)
-                if (dist <= 1.05*D):
-                    print(f'spheres overlapping, dist={dist}, spheres #: {i}, {j}')
-                    print(f'locations: ({relaxed_points[i, :]}), ({relaxed_points[j, :]})')
+        for j in range(i + 1, N_sphere):
+
+            # displacement
+            dr = relaxed_points[i, :] - relaxed_points[j, :]
+
+            # minimum-image periodic displacement
+            dr_periodic = dr - L * np.round(dr / L)
+
+            dist = np.linalg.norm(dr_periodic)
+            min_dist = min(min_dist, dist)
+
+            if dist <= overlap_tol:
+                print(f'spheres overlapping, periodic dist={dist}, spheres #: {i}, {j}')
+                print(f'locations: ({relaxed_points[i, :]}), ({relaxed_points[j, :]})')
+                print(f'raw displacement:      {dr}')
+                print(f'periodic displacement: {dr_periodic}')
+                print(f'periodic image shift:  {dr_periodic - dr}')
+
+    print(f'closest neighbors physical distance: {min_dist}, distance in particle diameters: {min_dist/D}, separation in diameters: {min_dist/D - 1}')
 
     fig = plt.figure(figsize=(10,5))
     ax1 = fig.add_subplot(121, projection='3d')

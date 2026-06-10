@@ -24,20 +24,20 @@ particle_vf = (N_s * vol_s) / (L**3)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 1.4
+M_start = 1.4
+M_tgt = 1.4
 Re = 500.0
 
 P = 101325
 rho = 1.225
 
-v1 = M * np.sqrt(gam_a * P / rho) 
-mu = rho * v1 * D / Re
-
-v12 = v1#/2
+v_start = M_start * np.sqrt(gam_a * P / rho) 
+v_tgt   = M_tgt   * np.sqrt(gam_a * P / rho) 
+mu = rho * v_tgt * D / Re
 
 # control params
-CD = Osnes_CD(particle_vf, Re, M, gam_a)
-drag = 0.5 * rho * v1**2 * np.pi * R**2 * CD
+CD = Osnes_CD(particle_vf, Re, M_tgt, gam_a)
+drag = 0.5 * rho * v_tgt**2 * np.pi * R**2 * CD
 g0 = drag / mass_s
 fRe = CD * Re / 24.0
 tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
@@ -46,16 +46,17 @@ Cg = 1.2; Cp = 1000.0
 
 K_Pg = -1.0/(Cg*tau_p)
 K_Dg = -0.5 
-K_Pp = -2.0*P/(Cp*M)
+K_Pp = -2.0*P/(Cp*M_tgt)
 
 #print('mu: ', mu)
 #print('v1: ', v1)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1e-6
-t_final = 8 * L / v1
-t_save = t_final / 250
+dt = 2.0e-6
+t_final = 8 * L / v_tgt
+Nt = int(t_final / dt)
+t_step_save = 1 #Nt // 250
 
 Nx = 127
 Ny = Nx
@@ -98,11 +99,10 @@ case_dict = {
     "m": Nx,
     "n": Ny,
     "p": Nz,
-    "cfl_const_dt": "T",
-    "cfl_target": 0.2, 
-    "n_start": 0,
-    "t_stop": t_final,
-    "t_save": t_save,  
+    "dt": dt,
+    "t_step_start": 0,
+    "t_step_stop": Nt,
+    "t_step_save": t_step_save,  
     # Simulation Algorithm Parameters
     # Only one patches are necessary, the air tube
     "num_patches": 1,
@@ -158,7 +158,7 @@ case_dict = {
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v12,
+    "patch_icpp(1)%vel(2)": v_start,
     "patch_icpp(1)%vel(3)": 0.0e00,
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
@@ -171,7 +171,7 @@ case_dict = {
 
     # periodic forcing
     "periodic_forcing": "T",
-    "u_inf_ref": v12,
+    "u_inf_ref": v_tgt,
     "rho_inf_ref": rho,
     "P_inf_ref": P,
     "mom_f_idx": 2,
@@ -179,6 +179,7 @@ case_dict = {
     "forcing_dt": 1.0/(2.0*dt),
     "fluid_volume_fraction": fluid_vf,
     "forcing_wrt": "T",
+    "forcing_start": 0,
 
     # controls
     # "particle_control": "T",

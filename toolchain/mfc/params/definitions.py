@@ -1328,7 +1328,7 @@ def _load():
     # periodic forcing
     for n in ["periodic_forcing", "forcing_wrt"]:
         _r(n, LOG)
-    for n in ["mom_f_idx", "forcing_window"]:
+    for n in ["mom_f_idx", "forcing_window", "forcing_start"]:
         _r(n, INT)
     for n in ["u_inf_ref", "rho_inf_ref", "P_inf_ref", "forcing_dt", "fluid_volume_fraction"]:
         _r(n, REAL)
