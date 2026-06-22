@@ -2,6 +2,10 @@ import json
 import math
 import numpy as np
 
+# load initial sphere locations
+sphere_loc = np.loadtxt('sphere_array_locations.txt')
+N_s = len(sphere_loc)
+
 gam_a = 1.4
 
 # particle diameter
@@ -15,60 +19,49 @@ L = 10.0 * D
 rho_s = 10.0 
 vol_s = 4.0/3.0 * np.pi * R**3
 mass_s = rho_s * vol_s
-N_s = 2
 particle_vf = (N_s * vol_s) / (L**3) 
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 2.0
+M_start = 2.0
+M_tgt = 2.0
 Re = 500.0
 
 P = 101325
 rho = 1.225
 
-v1 = M * np.sqrt(gam_a * P / rho) 
-mu = rho * v1 * D / Re
-
-v12 = v1#/2
+v_start = M_start * np.sqrt(gam_a * P / rho) 
+v_tgt   = M_tgt   * np.sqrt(gam_a * P / rho) 
+mu = rho * v_tgt * D / Re
 
 #print('mu: ', mu)
 #print('v1: ', v1)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 5.0E-06
-Nt = 25 
-t_save = 1 
+dt = 1.0e-6
+t_final = 6 * L / v_tgt
+Nt = int(t_final / dt)
+t_step_save = 1 #Nt // 300
 
 Nx = 127
 Ny = Nx
 Nz = Ny
 
-# print(f'CFL: {v1*dt/(L/(Nx+1))}')
-
 # immersed boundary dictionary
 ib_dict = {}
-ib_dict.update({
-    f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": -0.055,
-    f"patch_ib({1})%y_centroid": 0.0,
-    f"patch_ib({1})%z_centroid": 0.0,
-    f"patch_ib({1})%vel(2)": -0.,
-    f"patch_ib({1})%radius": D / 2,
-    f"patch_ib({1})%slip": "F",
-    f"patch_ib({1})%moving_ibm": 0,
-    f"patch_ib({1})%mass": mass_s,
-
-    f"patch_ib({2})%geometry": 8,
-    f"patch_ib({2})%x_centroid": +0.055,
-    f"patch_ib({2})%y_centroid": 0.0,
-    f"patch_ib({2})%z_centroid": 0.0,
-    f"patch_ib({2})%vel(2)": -0.,
-    f"patch_ib({2})%radius": D / 2,
-    f"patch_ib({2})%slip": "F",
-    f"patch_ib({2})%moving_ibm": 0,
-    f"patch_ib({2})%mass": mass_s,
-    })
+for i in range(N_s):
+  ib_dict.update({
+      f"patch_ib({i+1})%geometry": 8,
+      f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
+      f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
+      f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
+      f"patch_ib({i+1})%vel(2)": 0.0,
+      f"patch_ib({i+1})%radius": D / 2,
+      f"patch_ib({i+1})%slip": "F",
+      f"patch_ib({i+1})%moving_ibm": 0, #2
+      f"patch_ib({i+1})%mass": mass_s,
+      })
 
 # Configuring case dictionary
 case_dict = {
@@ -84,16 +77,14 @@ case_dict = {
     # z direction
     "z_domain%beg": -5.0 * D,
     "z_domain%end": 5.0 * D,
-    "cyl_coord": "F",
     "m": Nx,
     "n": Ny,
     "p": Nz,
     "dt": dt,
     "t_step_start": 0,
-    "t_step_stop": Nt,  
-    "t_step_save": t_save,  
+    "t_step_stop": Nt,
+    "t_step_save": t_step_save,  
     # Simulation Algorithm Parameters
-    # Only one patches are necessary, the air tube
     "num_patches": 1,
     # Use the 5 equation model
     "model_eqns": 2,
@@ -109,33 +100,21 @@ case_dict = {
     "time_stepper": 3,
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
-    "weno_order": 5,
-    "weno_eps": 1.0e-14,
+    "weno_order": 1,
+    "weno_eps": 1.0e-16,
     "weno_Re_flux": "T",
     "weno_avg": "T",
-    "avg_state": 2,
-    "mapped_weno": "T",
-    "null_weights": "F",
-    "mp_weno": "T",
+    "avg_state": 1,
+    # "mp_weno": "T",
     "riemann_solver": 2,
     "wave_speeds": 1,
     # periodic bc
-    "bc_x%beg": -3,
-    "bc_x%end": -3,
-    "bc_y%beg": -7, # -7, -11
-    "bc_y%end": -8, # -8, -12
-    "bc_z%beg": -3,
-    "bc_z%end": -3,
-
-    'bc_y%grcbc_in': "T", 
-    'bc_y%grcbc_out': "F", 
-    "bc_y%vel_in(1)": 0.0,
-    "bc_y%vel_in(2)": v12,
-    "bc_y%vel_in(3)": 0.0,
-    "bc_y%pres_in": P,
-    "bc_y%alpha_rho_in(1)": rho,
-    "bc_y%alpha_in(1)": 1.0,
-
+    "bc_x%beg": -1,
+    "bc_x%end": -1,
+    "bc_y%beg": -1,
+    "bc_y%end": -1,
+    "bc_z%beg": -1,
+    "bc_z%end": -1,
     # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_s,
@@ -146,8 +125,7 @@ case_dict = {
     "prim_vars_wrt": "T",
     "E_wrt": "T",
     "parallel_io": "T",
-    # Patch: Constant Tube filled with air
-    # Specify the cylindrical air tube grid geometry
+    # fluid patch parameters
     "patch_icpp(1)%geometry": 9,
     "patch_icpp(1)%x_centroid": 0.0,
     # Uniform medium density, centroid is at the center of the domain
@@ -158,7 +136,7 @@ case_dict = {
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v12,
+    "patch_icpp(1)%vel(2)": v_start,
     "patch_icpp(1)%vel(3)": 0.0e00,
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
@@ -168,6 +146,18 @@ case_dict = {
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
+
+    # periodic forcing
+    "periodic_forcing": "T",
+    "u_inf_ref": v_tgt,
+    "rho_inf_ref": rho,
+    "P_inf_ref": P,
+    "mom_f_idx": 2,
+    "forcing_window": 1,
+    "forcing_dt": 1.0/(8.0*dt),
+    "fluid_volume_fraction": fluid_vf,
+    "forcing_wrt": "T",
+    "forcing_start": 0,
     }
 
 case_dict.update(ib_dict)

@@ -707,6 +707,35 @@ contains
                     end if
                 end if
 
+
+
+                ! do i = 1, sys_size
+                !     do l = 0, p
+                !         do k = 0, n
+                !             do j = 0, m
+                !                 if (ieee_is_nan(real(qL_rsx_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qL_rsx_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !                 if (ieee_is_nan(real(qL_rsy_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qL_rsy_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !                 if (ieee_is_nan(real(qL_rsz_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qL_rsz_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !                 if (ieee_is_nan(real(qR_rsx_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qR_rsx_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !                 if (ieee_is_nan(real(qR_rsy_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qR_rsy_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !                 if (ieee_is_nan(real(qR_rsz_vf(j, k, l, i), kind=wp))) then
+                !                     print *, "NaN(s) in qR_rsz_vf", i, j, k, l, proc_rank, t_step, x_cc(j), y_cc(k), z_cc(l), ib_markers%sf(j, k, l)
+                !                 end if
+                !             end do
+                !         end do
+                !     end do
+                ! end do
+
                 ! Reconstruct viscous derivatives for viscosity
                 if (weno_Re_flux) then
                     iv%beg = eqn_idx%mom%beg; iv%end = eqn_idx%mom%end
@@ -738,6 +767,36 @@ contains
                     irx%beg = 0; iry%beg = 0; irz%beg = -1
                 end if
                 irx%end = m; iry%end = n; irz%end = p
+
+
+                ! call s_apply_first_order_recon_fallback(id)
+
+                ! if (proc_rank == 4 .and. id == 2) then
+
+                !     print *, '============================================================'
+                !     print *, 'POST-RECON FACE PAIR ACTUALLY USED BY RIEMANN'
+                !     print *, 'proc_rank,id,t_step,stage = ', proc_rank, id, t_step, stage
+                !     print *, 'face local rsy j,k,l      = ', 12, 31, 32
+                !     print *, 'physical approx x,y,z     = ', 31, 12, 32
+
+                !     print *, 'Riemann left state  rho = qR_rsy_vf(12,31,32,1) = ', qR_rsy_vf(12, 31, 32, 1)
+                !     print *, 'Riemann right state rho = qL_rsy_vf(13,31,32,1) = ', qL_rsy_vf(13, 31, 32, 1)
+
+                !     print *, 'Riemann left state  p   = qR_rsy_vf(12,31,32,E) = ', qR_rsy_vf(12, 31, 32, eqn_idx%E)
+                !     print *, 'Riemann right state p   = qL_rsy_vf(13,31,32,E) = ', qL_rsy_vf(13, 31, 32, eqn_idx%E)
+
+                !     print *, 'For comparison, opposite/non-used pairing:'
+                !     print *, 'qL_rsy_vf(12,31,32,1) = ', qL_rsy_vf(12, 31, 32, 1)
+                !     print *, 'qR_rsy_vf(13,31,32,1) = ', qR_rsy_vf(13, 31, 32, 1)
+
+                !     print *, '--- cell-centered density stencil ---'
+                !     do q = 6, 18
+                !         print *, 'cell y = ', q, ' rho = ', q_prim_qp%vf(1)%sf(31, q, 32), &
+                !                   ' p = ', q_prim_qp%vf(eqn_idx%E)%sf(31, q, 32), ib_markers%sf(31, q, 32)
+                !     end do
+
+                !     print *, '============================================================'
+                ! end if
 
                 ! Computing Riemann Solver Flux and Source Flux
                 call nvtxStartRange("RHS-RIEMANN-SOLVER")
@@ -891,6 +950,87 @@ contains
         call nvtxEndRange
 
     end subroutine s_compute_rhs
+
+    subroutine s_apply_first_order_recon_fallback(id)
+
+        integer, intent(in) :: id
+        integer :: i, j, k, l
+
+        if (id == 1) then ! x-direction; q*_rsx_vf(x,y,z,var)
+            $:GPU_PARALLEL_LOOP(private='[i, j, k, l]', collapse=3)
+            do l = 0, p
+                do k = 0, n
+                    do j = 0, m - 1
+
+                        if (.not. (qR_rsx_vf(j,     k, l, 1) > sgm_eps) .or. &
+                            .not. (qL_rsx_vf(j + 1, k, l, 1) > sgm_eps) .or. &
+                            .not. (qR_rsx_vf(j,     k, l, eqn_idx%E) > sgm_eps) .or. &
+                            .not. (qL_rsx_vf(j + 1, k, l, eqn_idx%E) > sgm_eps)) then
+
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do i = 1, sys_size
+                                qR_rsx_vf(j,     k, l, i) = q_prim_qp%vf(i)%sf(j,     k, l)
+                                qL_rsx_vf(j + 1, k, l, i) = q_prim_qp%vf(i)%sf(j + 1, k, l)
+                            end do
+
+                        end if
+
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+
+        else if (id == 2) then ! y-direction; q*_rsy_vf(y,x,z,var)
+            $:GPU_PARALLEL_LOOP(private='[i, j, k, l]', collapse=3)
+            do l = 0, p
+                do k = 0, m
+                    do j = 0, n - 1
+
+                        if (.not. (qR_rsy_vf(j,     k, l, 1) > sgm_eps) .or. &
+                            .not. (qL_rsy_vf(j + 1, k, l, 1) > sgm_eps) .or. &
+                            .not. (qR_rsy_vf(j,     k, l, eqn_idx%E) > sgm_eps) .or. &
+                            .not. (qL_rsy_vf(j + 1, k, l, eqn_idx%E) > sgm_eps)) then
+
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do i = 1, sys_size
+                                qR_rsy_vf(j,     k, l, i) = q_prim_qp%vf(i)%sf(k, j,     l)
+                                qL_rsy_vf(j + 1, k, l, i) = q_prim_qp%vf(i)%sf(k, j + 1, l)
+                            end do
+
+                        end if
+
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+
+        else if (id == 3) then ! z-direction; q*_rsz_vf(z,y,x,var)
+            $:GPU_PARALLEL_LOOP(private='[i, j, k, l]', collapse=3)
+            do l = 0, m
+                do k = 0, n
+                    do j = 0, p - 1
+
+                        if (.not. (qR_rsz_vf(j,     k, l, 1) > sgm_eps) .or. &
+                            .not. (qL_rsz_vf(j + 1, k, l, 1) > sgm_eps) .or. &
+                            .not. (qR_rsz_vf(j,     k, l, eqn_idx%E) > sgm_eps) .or. &
+                            .not. (qL_rsz_vf(j + 1, k, l, eqn_idx%E) > sgm_eps)) then
+
+                            $:GPU_LOOP(parallelism='[seq]')
+                            do i = 1, sys_size
+                                qR_rsz_vf(j,     k, l, i) = q_prim_qp%vf(i)%sf(l, k, j)
+                                qL_rsz_vf(j + 1, k, l, i) = q_prim_qp%vf(i)%sf(l, k, j + 1)
+                            end do
+
+                        end if
+
+                    end do
+                end do
+            end do
+            $:END_GPU_PARALLEL_LOOP()
+
+        end if
+
+    end subroutine s_apply_first_order_recon_fallback
 
     !> Accumulate advection source contributions from a given coordinate direction into the RHS
     subroutine s_compute_advection_source_term(idir, rhs_vf, q_cons_vf, q_prim_vf, flux_src_n_vf)

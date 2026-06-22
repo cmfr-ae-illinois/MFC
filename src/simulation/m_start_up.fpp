@@ -114,8 +114,8 @@ contains
             & lag_params, hyperelasticity, R0ref, num_bc_patches, Bx0, cont_damage, tau_star, cont_damage_s, alpha_bar, &
             & hyper_cleaning, hyper_cleaning_speed, hyper_cleaning_tau, alf_factor, num_igr_iters, num_igr_warm_start_iters, &
             & int_comp, ic_eps, ic_beta, nv_uvm_out_of_core, nv_uvm_igr_temps_on_gpu, nv_uvm_pref_gpu, down_sample, fft_wrt, &
-            & periodic_forcing, forcing_start, u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, forcing_wrt, &
-            & fluid_volume_fraction, particle_control, cntrl_p, particle_bf
+            & periodic_forcing, forcing_start, u_inf_ref, rho_inf_ref, P_inf_ref, mom_f_idx, forcing_window, forcing_dt, &
+            & forcing_wrt, fluid_volume_fraction, particle_control, particle_control_start, cntrl_p, particle_bf
 
         inquire (FILE=trim(file_path), EXIST=file_exist)
 
@@ -783,7 +783,7 @@ contains
                 do k = 0, n
                     do j = 0, m
                         if (ieee_is_nan(real(q_cons_ts(stor)%vf(i)%sf(j, k, l), kind=wp))) then
-                            print *, "NaN(s) in timestep output.", j, k, l, i, proc_rank, t_step, m, n, p, ib_markers%sf(j, k, l)
+                            print *, "NaN(s) in timestep output.", i, j, k, l, proc_rank, t_step, x_cc(i), y_cc(j), z_cc(k), ib_markers%sf(j, k, l)
                             call s_mpi_abort("NaN(s) in timestep output.")
                         end if
                     end do

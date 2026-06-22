@@ -490,6 +490,7 @@ module m_global_parameters
     real(wp)             :: rho_inf_ref
     real(wp)             :: P_inf_ref
     logical              :: particle_control
+    integer              :: particle_control_start
     real(wp)             :: particle_bf
     type(control_params) :: cntrl_p
 
@@ -860,6 +861,7 @@ contains
         P_inf_ref = dflt_real
 
         particle_control = .false.
+        particle_control_start = 0
         particle_bf = dflt_real
 
         cntrl_p%Re_tgt = dflt_real

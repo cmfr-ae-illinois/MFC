@@ -81,24 +81,28 @@ if (__name__ == '__main__'):
     phi = 0.05
 
     D = 0.1
-    L = 10*D
+    L = 10 * D
+
+    Lx = L
+    Ly = 2 * L
+    Lz = L
 
     output_dir = '../runs/moving_particle_array'
     if os.path.exists(output_dir) == False:
         os.mkdir(output_dir)
 
-    N_sphere = int( 6*phi*L**3 / (np.pi*D**3) )
+    N_sphere = int( 6*phi*Lx*Ly*Lz / (np.pi*D**3) )
     print(f'volume fraction phi: {phi}, number of spheres: {N_sphere}')
-    print(f'actual phi value: {N_sphere*4/3*np.pi*(D/2)**3/(L**3)}')
+    print(f'actual phi value: {N_sphere*4/3*np.pi*(D/2)**3/(Lx*Ly*Lz)}')
 
-    x_i = L/2 * np.random.uniform(-1, 1, N_sphere)
-    y_i = L/2 * np.random.uniform(-1, 1, N_sphere)
-    z_i = L/2 * np.random.uniform(-1, 1, N_sphere)
+    x_i = Lx/2 * np.random.uniform(-1, 1, N_sphere)
+    y_i = Ly/2 * np.random.uniform(-1, 1, N_sphere)
+    z_i = Lz/2 * np.random.uniform(-1, 1, N_sphere)
 
     initial_points = np.stack((x_i, y_i, z_i), axis=1)
-    box = freud.box.Box.cube(L)
+    box = freud.box.Box(Lx, Ly, Lz)
     
-    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=25)
+    relaxed_points = lloyd_relaxation_3d(initial_points, box, iterations=60)
     print(np.shape(relaxed_points))
 
     np.savetxt(output_dir+'/sphere_array_locations.txt', relaxed_points)
@@ -114,7 +118,7 @@ if (__name__ == '__main__'):
             dr = relaxed_points[i, :] - relaxed_points[j, :]
 
             # minimum-image periodic displacement
-            dr_periodic = dr - L * np.round(dr / L)
+            dr_periodic = box.wrap(dr)
 
             dist = np.linalg.norm(dr_periodic)
             min_dist = min(min_dist, dist)

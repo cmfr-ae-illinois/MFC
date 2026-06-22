@@ -37,7 +37,8 @@ v12 = v1#/2
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 5.0E-06
-Nt = 25 
+Nt1 = 25 
+Nt2 = 50
 t_save = 1 
 
 Nx = 127
@@ -75,6 +76,9 @@ case_dict = {
     # Logistics
     "run_time_info": "T",
     # Computational Domain Parameters
+    'old_ic': 'T',
+    'old_grid': 'T',
+    't_step_old': 0,
     # x direction
     "x_domain%beg": -5.0 * D,
     "x_domain%end": 5.0 * D,
@@ -84,17 +88,15 @@ case_dict = {
     # z direction
     "z_domain%beg": -5.0 * D,
     "z_domain%end": 5.0 * D,
-    "cyl_coord": "F",
     "m": Nx,
     "n": Ny,
     "p": Nz,
     "dt": dt,
-    "t_step_start": 0,
-    "t_step_stop": Nt,  
+    "t_step_start": Nt1,
+    "t_step_stop": Nt2,  
     "t_step_save": t_save,  
     # Simulation Algorithm Parameters
-    # Only one patches are necessary, the air tube
-    "num_patches": 1,
+    "num_patches": 0,
     # Use the 5 equation model
     "model_eqns": 2,
     # 6 equations model does not need the K \div(u) term
@@ -146,24 +148,6 @@ case_dict = {
     "prim_vars_wrt": "T",
     "E_wrt": "T",
     "parallel_io": "T",
-    # Patch: Constant Tube filled with air
-    # Specify the cylindrical air tube grid geometry
-    "patch_icpp(1)%geometry": 9,
-    "patch_icpp(1)%x_centroid": 0.0,
-    # Uniform medium density, centroid is at the center of the domain
-    "patch_icpp(1)%y_centroid": 0.0,
-    "patch_icpp(1)%z_centroid": 0.0,
-    "patch_icpp(1)%length_x": 10 * D,
-    "patch_icpp(1)%length_y": 10 * D,
-    "patch_icpp(1)%length_z": 10 * D,
-    # Specify the patch primitive variables
-    "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v12,
-    "patch_icpp(1)%vel(3)": 0.0e00,
-    "patch_icpp(1)%pres": P,
-    "patch_icpp(1)%alpha_rho(1)": rho,
-    "patch_icpp(1)%alpha(1)": 1.0e00,
-    # Patch: Sphere Immersed Boundary
     # Fluids Physical Parameters
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,

@@ -12,6 +12,7 @@ module m_additional_forcing
     private; public :: s_initialize_additional_forcing_module, s_finalize_additional_forcing_module, s_compute_periodic_forcing, &
         & s_update_controllers
 
+    ! forcing params
     type(scalar_field), allocatable, dimension(:) :: q_periodic_force
     real(wp)                                      :: avg_coeff
     real(wp)                                      :: spatial_rho, spatial_rhou, spatial_rhoe
@@ -24,10 +25,13 @@ module m_additional_forcing
     $:GPU_DECLARE(create='[spatial_rho, spatial_rhou, spatial_rhoe, phase_rho, phase_rhou, phase_rhoe]')
 
     ! control params
+    real(wp)                            :: rho_avg_loc, rhou_avg_loc, cs_avg_loc, Vp_avg
     real(wp), allocatable, dimension(:) :: err_u_hist
     real(wp), allocatable, dimension(:) :: rho_wdw_cntrl, u_wdw_cntrl, cs_wdw_cntrl, Vp_wdw_cntrl
     real(wp)                            :: rho_sum_cntrl, u_sum_cntrl, cs_sum_cntrl, Vp_sum_cntrl
     integer                             :: wdw_fill_cntrl
+
+    $:GPU_DECLARE(create='[rho_avg_loc, rhou_avg_loc, cs_avg_loc, Vp_avg]')
 
 contains
 
@@ -36,64 +40,67 @@ contains
         integer  :: i
         real(wp) :: domain_vol
 
-        @:ALLOCATE(q_periodic_force(1:num_dims+2))
-        do i = 1, num_dims + 2
-            @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
-            @:ACC_SETUP_SFs(q_periodic_force(i))
-        end do
+        if (periodic_forcing) then
+            @:ALLOCATE(q_periodic_force(1:num_dims+2))
+            do i = 1, num_dims + 2
+                @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
+                @:ACC_SETUP_SFs(q_periodic_force(i))
+            end do
 
-        ! total cartesian domain volume
-        domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
+            ! total cartesian domain volume
+            domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
 
-        ! coefficient used for phase averages
-        avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
-        $:GPU_UPDATE(device='[avg_coeff]')
+            ! coefficient used for phase averages
+            avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
+            $:GPU_UPDATE(device='[avg_coeff]')
 
-        ! initialization of parameters
-        window_fill = 0
+            ! initialization of parameters
+            window_fill = 0
 
-        @:ALLOCATE(rho_window(forcing_window))
-        @:ALLOCATE(rhou_window(forcing_window))
-        @:ALLOCATE(rhoe_window(forcing_window))
+            @:ALLOCATE(rho_window(forcing_window))
+            @:ALLOCATE(rhou_window(forcing_window))
+            @:ALLOCATE(rhoe_window(forcing_window))
 
-        rho_window = 0.0_wp
-        rhou_window = 0.0_wp
-        rhoe_window = 0.0_wp
+            rho_window = 0.0_wp
+            rhou_window = 0.0_wp
+            rhoe_window = 0.0_wp
 
-        sum_rho = 0.0_wp
-        sum_rhou = 0.0_wp
-        sum_rhoe = 0.0_wp
+            sum_rho = 0.0_wp
+            sum_rhou = 0.0_wp
+            sum_rhoe = 0.0_wp
 
-        phase_rho = 0._wp
-        phase_rhou = 0._wp
-        phase_rhoe = 0._wp
+            phase_rho = 0._wp
+            phase_rhou = 0._wp
+            phase_rhoe = 0._wp
 
-        if (forcing_wrt .and. proc_rank == 0) then
-            open (unit=102, file='forcing.bin', status='replace', form='unformatted', access='stream', action='write')
+            if (forcing_wrt .and. proc_rank == 0) then
+                open (unit=102, file='forcing.bin', status='replace', form='unformatted', access='stream', action='write')
+            end if
         end if
 
-        ! controls
-        @:ALLOCATE(err_u_hist(4))
-        err_u_hist = 0._wp
+        if (particle_control) then
+            @:ALLOCATE(err_u_hist(4))
+            err_u_hist = 0._wp
 
-        @:ALLOCATE(rho_wdw_cntrl(cntrl_p%window_size))
-        @:ALLOCATE(u_wdw_cntrl(cntrl_p%window_size))
-        @:ALLOCATE(cs_wdw_cntrl(cntrl_p%window_size))
-        @:ALLOCATE(Vp_wdw_cntrl(cntrl_p%window_size))
-        rho_wdw_cntrl = 0._wp
-        u_wdw_cntrl = 0._wp
-        cs_wdw_cntrl = 0._wp
-        Vp_wdw_cntrl = 0._wp
+            @:ALLOCATE(rho_wdw_cntrl(cntrl_p%window_size))
+            @:ALLOCATE(u_wdw_cntrl(cntrl_p%window_size))
+            @:ALLOCATE(cs_wdw_cntrl(cntrl_p%window_size))
+            @:ALLOCATE(Vp_wdw_cntrl(cntrl_p%window_size))
+            rho_wdw_cntrl = 0._wp
+            u_wdw_cntrl = 0._wp
+            cs_wdw_cntrl = 0._wp
+            Vp_wdw_cntrl = 0._wp
 
-        rho_sum_cntrl = 0._wp
-        u_sum_cntrl = 0._wp
-        cs_sum_cntrl = 0._wp
-        Vp_sum_cntrl = 0._wp
+            rho_sum_cntrl = 0._wp
+            u_sum_cntrl = 0._wp
+            cs_sum_cntrl = 0._wp
+            Vp_sum_cntrl = 0._wp
 
-        wdw_fill_cntrl = 0
+            wdw_fill_cntrl = 0
 
-        if (forcing_wrt .and. proc_rank == 0) then
-            open (unit=103, file='controls.bin', status='replace', form='unformatted', access='stream', action='write')
+            if (forcing_wrt .and. proc_rank == 0) then
+                open (unit=103, file='controls.bin', status='replace', form='unformatted', access='stream', action='write')
+            end if
         end if
 
     end subroutine s_initialize_additional_forcing_module
@@ -111,28 +118,11 @@ contains
         integer                                                :: i, j, k, l
 
         ! zero spatial averages
-
         spatial_rho = 0._wp
         spatial_rhou = 0._wp
         spatial_rhoe = 0._wp
 
         $:GPU_UPDATE(device='[spatial_rho, spatial_rhou, spatial_rhoe]')
-
-        ! NaN check before computing spatial averages
-        do i = 1, sys_size
-            do l = 0, p
-                do k = 0, n
-                    do j = 0, m
-                        if (ieee_is_nan(real(q_cons_vf(i)%sf(j, k, l), kind=wp))) then
-                            print *, "NaN(s) in q_cons_vf", i, j, k, l, proc_rank, t_step, m, n, p, ib_markers%sf(j, k, l)
-                        end if
-                        if (ieee_is_nan(real(q_prim_vf(i)%sf(j, k, l), kind=wp))) then
-                            print *, "NaN(s) in q_prim_vf", i, j, k, l, proc_rank, t_step, m, n, p, ib_markers%sf(j, k, l)
-                        end if
-                    end do
-                end do
-            end do
-        end do
 
         ! compute spatial averages
         $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoe]]', reductionOp='[+]', private='[l, &
@@ -214,8 +204,8 @@ contains
 
                         ! energy forcing
                         q_periodic_force(2 + num_dims)%sf(i, j, k) = (P_inf_ref*gammas(1) - phase_rhoe)*forcing_dt & 
-                            ! & + q_prim_vf(eqn_idx%mom%beg + mom_f_idx - 1)%sf(i, j, k)*f_rhou & 
-                            & + q_cons_vf(eqn_idx%E)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho
+                            & + q_prim_vf(eqn_idx%mom%beg + mom_f_idx - 1)%sf(i, j, k)*f_rhou 
+                            ! & + q_cons_vf(eqn_idx%E)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho
                     end if
                 end do
             end do
@@ -230,18 +220,20 @@ contains
                     if (ib_markers%sf(i, j, k) == 0) then
                         rho = 0._wp
                         do l = 1, num_fluids
-                            rho = rho + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)
+                            rho = rho + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                         end do
                         do l = 1, num_fluids
-                            rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k) + q_cons_vf(eqn_idx%cont%beg+l-1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho ! continuity
+                            rhs_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k) = rhs_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, &
+                                   & k) + q_cons_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)*q_periodic_force(1)%sf(i, j, k)/rho  ! continuity
                         end do
-                        rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(2+num_dims)%sf(i, j, k) ! energy
+                        ! energy
+                        rhs_vf(eqn_idx%E)%sf(i, j, k) = rhs_vf(eqn_idx%E)%sf(i, j, k) + q_periodic_force(2 + num_dims)%sf(i, j, k)
                     end if
                 end do
             end do
         end do
         $:END_GPU_PARALLEL_LOOP()
-        
+
         if (t_step > forcing_start) then
             $:GPU_PARALLEL_LOOP(collapse=3, private='[l]')
             do i = 0, m
@@ -249,7 +241,8 @@ contains
                     do k = 0, p
                         if (ib_markers%sf(i, j, k) == 0) then
                             do l = 1, num_dims
-                                rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg+l-1)%sf(i, j, k) + q_periodic_force(1+l)%sf(i, j, k) ! momentum
+                                rhs_vf(eqn_idx%mom%beg + l - 1)%sf(i, j, k) = rhs_vf(eqn_idx%mom%beg + l - 1)%sf(i, j, &
+                                       & k) + q_periodic_force(1 + l)%sf(i, j, k)  ! momentum
                             end do
                         end if
                     end do
@@ -271,14 +264,15 @@ contains
         integer, intent(in) :: t_step
         type(scalar_field), dimension(sys_size), intent(in) :: q_cons_vf
         type(scalar_field), dimension(sys_size), intent(in) :: q_prim_vf
-        real(wp) :: Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc, rho, dVol, rho_avg, rhou_avg, u_avg, cs_avg, pres
-        real(wp) :: mu, Dp, u_star_rel, gamma, Mach, u_rel
+        real(wp) :: mu, Dp, gamma 
+        real(wp) :: rho, dVol, pres
+        real(wp) :: rho_avg, rhou_avg, u_avg, cs_avg
+        real(wp) :: u_star_rel, Mach, u_rel
         real(wp) :: err_u, err_M, d_err_u
         integer :: window_loc
         integer :: i, j, k, l
 
         ! these need to be moved to case file/setup
-
         mu = 1._wp/fluid_pp(1)%Re(1)
         Dp = 2._wp*patch_ib(1)%radius
         gamma = 1._wp/fluid_pp(1)%gamma + 1._wp
@@ -289,14 +283,19 @@ contains
         rhou_avg_loc = 0._wp
         cs_avg_loc = 0._wp
 
+        $:GPU_UPDATE(device='[Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
+
         ! get average particle velocity
+        $:GPU_LOOP(parallelism='[seq]')
         do i = 1, num_ibs
             Vp_avg = Vp_avg + patch_ib(i)%vel(mom_f_idx)
         end do
+        $:GPU_UPDATE(host='[Vp_avg]')
 
         Vp_avg = Vp_avg/num_ibs
 
         ! get averages of density, momentum, soundspeed
+        $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[rho_avg_loc, rhou_avg_loc, cs_avg_loc]]', reductionOp='[+]', private='[l, rho, dVol, pres]', copyin='[gamma]')
         do i = 0, m
             do j = 0, n
                 do k = 0, p
@@ -314,6 +313,9 @@ contains
                 end do
             end do
         end do
+        $:END_GPU_PARALLEL_LOOP()
+
+        $:GPU_UPDATE(host='[rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
 
         ! reduction sum across entire domain
         call s_mpi_allreduce_sum(rho_avg_loc, rho_avg)
@@ -359,19 +361,19 @@ contains
         err_u_hist(3) = err_u_hist(4)
         err_u_hist(4) = err_u
         if (t_step > 3) then
-            ! d_err_u = (err_u_hist(4) - err_u_hist(3))/dt
-            d_err_u = (1.5_wp*err_u_hist(4) - 2._wp*err_u_hist(3) + 0.5_wp*err_u_hist(2))/dt
+            d_err_u = (err_u_hist(4) - err_u_hist(3))/dt
+            ! d_err_u = (1.5_wp*err_u_hist(4) - 2._wp*err_u_hist(3) + 0.5_wp*err_u_hist(2))/dt
             ! d_err_u = (11._wp*err_u_hist(4) - 18._wp*err_u_hist(3) + 9._wp*err_u_hist(2) - 2._wp*err_u_hist(1))/(6._wp*dt)
         else
             d_err_u = 0._wp
         end if
 
-        particle_bf = particle_bf + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*d_err_u
-        P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M
-
-        if (t_step == 800) then
-            particle_bf = particle_bf*2._wp  ! perturb
+        if (t_step > particle_control_start) then
+            particle_bf = particle_bf + cntrl_p%K_Pg*err_u + cntrl_p%K_Dg*d_err_u
+            P_inf_ref = P_inf_ref + cntrl_p%K_Pp*err_M
         end if
+
+        $:GPU_UPDATE(device='[particle_bf, P_inf_ref]')
 
         if (forcing_wrt .and. proc_rank == 0) then
             print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, rho_avg, u_avg, cs_avg

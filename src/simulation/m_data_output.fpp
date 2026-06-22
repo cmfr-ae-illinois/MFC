@@ -258,6 +258,8 @@ contains
             else if (icfl_max_glb > 1._wp) then
                 print *, 'icfl', icfl_max_glb
                 call s_mpi_abort('ICFL is greater than 1.0. Exiting.')
+            else if (icfl_max_glb > 0.5_wp) then
+                print *, 'WARNING: icfl > 0.5', icfl_max_glb
             end if
 
             if (viscous) then
@@ -266,8 +268,13 @@ contains
                 else if (vcfl_max_glb > 1._wp) then
                     print *, 'vcfl', vcfl_max_glb
                     call s_mpi_abort('VCFL is greater than 1.0. Exiting.')
+                else if (vcfl_max_glb > 0.5_wp) then
+                    print *, 'WARNING: vcfl > 0.5', vcfl_max_glb
                 end if
             end if
+
+            print *, icfl_max_glb, vcfl_max_glb
+            
         end if
 
         call s_mpi_barrier()

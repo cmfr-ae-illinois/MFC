@@ -1336,6 +1336,7 @@ def _load():
     # particle control
     for n in ["particle_control"]:
         _r(n, LOG)
+    _r("particle_control_start", INT)
     for n in ["Re_tgt", "M_tgt", "K_Pg", "K_Dg", "K_Pp"]:
         _r(f"cntrl_p%{n}", REAL)
     _r("particle_bf", REAL)
