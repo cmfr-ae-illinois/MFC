@@ -567,16 +567,14 @@ contains
 
         if (ib) then
             if (moving_immersed_boundary_flag) then
-                $:GPU_UPDATE(host='[patch_ib(1:num_ibs)]')
                 call s_wrap_periodic_ibs()  ! wraps the positions of IBs to the local proc
                 call s_handoff_ib_ownership()  ! recomputes which ranks own which IBs and communicate to neighbors
-                call s_update_mib()
             else if (ib_state_wrt) then
                 call s_compute_ib_forces(q_prim_vf, fluid_pp)
             end if
         end if
 
-        if (particle_control) then  ! update body force and pressure_infty
+        if (particle_control) then  ! update body force and freestream pressure
             call s_update_controllers(t_step, q_cons_ts(1)%vf, q_prim_vf)
         end if
 
@@ -783,7 +781,7 @@ contains
         end do
         $:END_GPU_PARALLEL_LOOP()
 
-        call s_update_mib()
+        call s_update_mib(num_ibs)
 
         call nvtxEndRange
 
