@@ -1099,8 +1099,8 @@ def _load():
     _r("particle_control_start", INT)
     for n in ["Re_tgt", "M_tgt", "K_Pg", "K_Dg", "K_Pp"]:
         _r(f"cntrl_p%{n}", REAL)
-    _r("particle_bf", REAL)
     _r("cntrl_p%window_size", INT)
+    _r("particle_bf", REAL)
 
 # Load definitions when module imported and freeze registry
 def _init_registry():
@@ -1171,6 +1171,7 @@ TYPED_DECLS: dict[str, tuple] = {
     "lag_params": ("type(bubbles_lagrange_parameters)", None, True, "Lagrange bubbles' parameters"),
     "particle_cloud": ("type(particle_cloud_parameters)", "num_particle_clouds_max", False, "Particle bed specifications"),
     "simplex_params": ("type(simplex_noise_params)", None, False, None),
+    "cntrl_p": ("type(control_params)", None, True, "Particle-flow control parameters")
 }
 
 
@@ -1342,6 +1343,20 @@ _nv(
     "nv_uvm_out_of_core",
     "nv_uvm_igr_temps_on_gpu",
     "nv_uvm_pref_gpu",
+    "periodic_forcing", 
+    "forcing_wrt", 
+    "mom_f_idx", 
+    "forcing_window", 
+    "forcing_start",
+    "u_inf_ref", 
+    "rho_inf_ref", 
+    "P_inf_ref", 
+    "forcing_dt", 
+    "fluid_volume_fraction",
+    "particle_control",
+    "particle_control_start",
+    "cntrl_p",
+    "particle_bf",
 )
 _nv(
     _PRE,

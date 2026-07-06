@@ -191,6 +191,12 @@ contains
                 call MPI_BCAST(integral(j)%${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
             #:endfor
         end do
+
+        ! manual: particle control parameters
+        #:for VAR in ['Re_tgt', 'M_tgt', 'K_Pg', 'K_Dg', 'K_Pp']
+            call MPI_BCAST(cntrl_p%${VAR}$, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
+        #:endfor
+        call MPI_BCAST(cntrl_p%window_size, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
 #endif
 
     end subroutine s_mpi_bcast_user_inputs

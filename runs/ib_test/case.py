@@ -22,51 +22,42 @@ fluid_vf = 1.0 - particle_vf
 # fluid params
 M = 2.0
 Re = 500.0
-
 P = 101325
 rho = 1.225
-
 v1 = M * np.sqrt(gam_a * P / rho) 
 mu = rho * v1 * D / Re
 
-v12 = v1#/2
+# timestep
+dt = 4.0E-06
+Nt = 1000 
+t_save = 10 
 
-#print('mu: ', mu)
-#print('v1: ', v1)
-#print('rho: ', rho)
-#print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
-
-dt = 5.0E-06
-Nt = 25 
-t_save = 1 
-
-Nx = 127
+# grid
+Nx = 63
 Ny = Nx
 Nz = Ny
-
-# print(f'CFL: {v1*dt/(L/(Nx+1))}')
 
 # immersed boundary dictionary
 ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": -0.055,
-    f"patch_ib({1})%y_centroid": 0.0,
+    f"patch_ib({1})%x_centroid": 0.0,
+    f"patch_ib({1})%y_centroid": -0.35,
     f"patch_ib({1})%z_centroid": 0.0,
-    f"patch_ib({1})%vel(2)": -0.,
+    f"patch_ib({1})%vel(2)": -100.0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
-    f"patch_ib({1})%moving_ibm": 0,
+    f"patch_ib({1})%moving_ibm": 2,
     f"patch_ib({1})%mass": mass_s,
 
     f"patch_ib({2})%geometry": 8,
-    f"patch_ib({2})%x_centroid": +0.055,
-    f"patch_ib({2})%y_centroid": 0.0,
+    f"patch_ib({2})%x_centroid": 0.0,
+    f"patch_ib({2})%y_centroid": +0.35,
     f"patch_ib({2})%z_centroid": 0.0,
-    f"patch_ib({2})%vel(2)": -0.,
+    f"patch_ib({2})%vel(2)": +100.0,
     f"patch_ib({2})%radius": D / 2,
     f"patch_ib({2})%slip": "F",
-    f"patch_ib({2})%moving_ibm": 0,
+    f"patch_ib({2})%moving_ibm": 2,
     f"patch_ib({2})%mass": mass_s,
     })
 
@@ -110,31 +101,21 @@ case_dict = {
     # Reconstruct the primitive variables to minimize spurious
     # Use WENO5
     "weno_order": 5,
-    "weno_eps": 1.0e-14,
+    "weno_eps": 1.0e-16,
     "weno_Re_flux": "T",
     "weno_avg": "T",
     "avg_state": 2,
-    "mapped_weno": "T",
     "null_weights": "F",
     "mp_weno": "T",
     "riemann_solver": 2,
     "wave_speeds": 1,
     # periodic bc
-    "bc_x%beg": -3,
-    "bc_x%end": -3,
-    "bc_y%beg": -7, # -7, -11
-    "bc_y%end": -8, # -8, -12
-    "bc_z%beg": -3,
-    "bc_z%end": -3,
-
-    'bc_y%grcbc_in': "T", 
-    'bc_y%grcbc_out': "F", 
-    "bc_y%vel_in(1)": 0.0,
-    "bc_y%vel_in(2)": v12,
-    "bc_y%vel_in(3)": 0.0,
-    "bc_y%pres_in": P,
-    "bc_y%alpha_rho_in(1)": rho,
-    "bc_y%alpha_in(1)": 1.0,
+    "bc_x%beg": -1,
+    "bc_x%end": -1,
+    "bc_y%beg": -1, 
+    "bc_y%end": -1, 
+    "bc_z%beg": -1,
+    "bc_z%end": -1,
 
     # Set IB to True and add 1 patch
     "ib": "T",
@@ -146,6 +127,7 @@ case_dict = {
     "prim_vars_wrt": "T",
     "E_wrt": "T",
     "parallel_io": "T",
+    "ib_state_wrt": "T",
     # Patch: Constant Tube filled with air
     # Specify the cylindrical air tube grid geometry
     "patch_icpp(1)%geometry": 9,
@@ -158,7 +140,7 @@ case_dict = {
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": v12,
+    "patch_icpp(1)%vel(2)": 0.e00,
     "patch_icpp(1)%vel(3)": 0.0e00,
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
@@ -168,6 +150,11 @@ case_dict = {
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
+
+    "collision_model": 1,  # soft-sphere collision model
+    "ib_coefficient_of_friction": 0.1,
+    "collision_time": 20. * dt,
+    "coefficient_of_restitution": 0.9,  # almost perfectly elastic
     }
 
 case_dict.update(ib_dict)

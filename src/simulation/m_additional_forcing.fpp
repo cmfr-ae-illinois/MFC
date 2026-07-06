@@ -40,19 +40,19 @@ contains
         integer  :: i
         real(wp) :: domain_vol
 
+        ! total cartesian domain volume
+        domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
+
+        ! coefficient used for phase averages
+        avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
+        $:GPU_UPDATE(device='[avg_coeff]')
+
         if (periodic_forcing) then
             @:ALLOCATE(q_periodic_force(1:num_dims+2))
             do i = 1, num_dims + 2
                 @:ALLOCATE(q_periodic_force(i)%sf(0:m, 0:n, 0:p))
                 @:ACC_SETUP_SFs(q_periodic_force(i))
             end do
-
-            ! total cartesian domain volume
-            domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
-
-            ! coefficient used for phase averages
-            avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
-            $:GPU_UPDATE(device='[avg_coeff]')
 
             ! initialization of parameters
             window_fill = 0
@@ -269,30 +269,38 @@ contains
         real(wp) :: rho_avg, rhou_avg, u_avg, cs_avg
         real(wp) :: u_star_rel, Mach, u_rel
         real(wp) :: err_u, err_M, d_err_u
+        real(wp) :: Vp_sum_loc, Vp_sum
+        integer  :: ib_local
         integer :: window_loc
         integer :: i, j, k, l
 
         ! these need to be moved to case file/setup
         mu = 1._wp/fluid_pp(1)%Re(1)
-        Dp = 2._wp*patch_ib(1)%radius
+        Dp = 0.1_wp ! hardcoded currently 
         gamma = 1._wp/fluid_pp(1)%gamma + 1._wp
 
         ! intialize
-        Vp_avg = 0._wp
+        Vp_sum_loc = 0._wp
         rho_avg_loc = 0._wp
         rhou_avg_loc = 0._wp
         cs_avg_loc = 0._wp
 
-        $:GPU_UPDATE(device='[Vp_avg, rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
+        $:GPU_UPDATE(device='[Vp_sum_loc, rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
 
-        ! get average particle velocity
-        $:GPU_LOOP(parallelism='[seq]')
-        do i = 1, num_ibs
-            Vp_avg = Vp_avg + patch_ib(i)%vel(mom_f_idx)
+        $:GPU_PARALLEL_LOOP(reduction='[[Vp_sum_loc]]', reductionOp='[+]', private='[i, ib_local]')
+        do i = 1, num_local_ibs
+            ib_local = local_ib_patch_ids(i)
+
+            Vp_sum_loc = Vp_sum_loc + patch_ib(ib_local)%vel(mom_f_idx)
         end do
-        $:GPU_UPDATE(host='[Vp_avg]')
+        $:END_GPU_PARALLEL_LOOP()
 
-        Vp_avg = Vp_avg/num_ibs
+        $:GPU_UPDATE(host='[Vp_sum_loc]')
+
+        ! Global sum over the unique owner partition.
+        call s_mpi_allreduce_sum(Vp_sum_loc, Vp_sum)
+
+        Vp_avg = Vp_sum / real(num_gbl_ibs, wp)
 
         ! get averages of density, momentum, soundspeed
         $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[rho_avg_loc, rhou_avg_loc, cs_avg_loc]]', reductionOp='[+]', private='[l, rho, dVol, pres]', copyin='[gamma]')
@@ -376,7 +384,7 @@ contains
         $:GPU_UPDATE(device='[particle_bf, P_inf_ref]')
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, rho_avg, u_avg, cs_avg
+            print *, 'CONTROL:', particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach, rho_avg, u_avg, cs_avg, Vp_avg
             write (103) particle_bf, P_inf_ref, rho_avg*u_rel*Dp/mu, Mach
             flush (103)
         end if

@@ -37,9 +37,9 @@ v12 = v1#/2
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 5.0E-06
-Nt1 = 25 
-Nt2 = 50
-t_save = 1 
+Nt1 = 200 
+Nt2 = 500
+t_save = 10
 
 Nx = 127
 Ny = Nx
@@ -51,23 +51,23 @@ Nz = Ny
 ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": -0.055,
-    f"patch_ib({1})%y_centroid": 0.0,
+    f"patch_ib({1})%x_centroid": 0.0,
+    f"patch_ib({1})%y_centroid": -0.43,
     f"patch_ib({1})%z_centroid": 0.0,
-    f"patch_ib({1})%vel(2)": -0.,
+    f"patch_ib({1})%vel(2)": -10.0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
-    f"patch_ib({1})%moving_ibm": 0,
+    f"patch_ib({1})%moving_ibm": 2,
     f"patch_ib({1})%mass": mass_s,
 
     f"patch_ib({2})%geometry": 8,
-    f"patch_ib({2})%x_centroid": +0.055,
-    f"patch_ib({2})%y_centroid": 0.0,
+    f"patch_ib({2})%x_centroid": 0.0,
+    f"patch_ib({2})%y_centroid": +0.43,
     f"patch_ib({2})%z_centroid": 0.0,
-    f"patch_ib({2})%vel(2)": -0.,
+    f"patch_ib({2})%vel(2)": +10.0,
     f"patch_ib({2})%radius": D / 2,
     f"patch_ib({2})%slip": "F",
-    f"patch_ib({2})%moving_ibm": 0,
+    f"patch_ib({2})%moving_ibm": 2,
     f"patch_ib({2})%mass": mass_s,
     })
 

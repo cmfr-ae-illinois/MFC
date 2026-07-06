@@ -149,6 +149,7 @@ case_dict = {
     "cons_vars_wrt": "T", 
     "E_wrt": "T",
     "parallel_io": "T",
+    "ib_state_wrt": "T",
     # fluid patch parameters
     "patch_icpp(1)%geometry": 9,
     "patch_icpp(1)%x_centroid": 0.0,
@@ -185,7 +186,7 @@ case_dict = {
 
     # controls
     "particle_control": "T",
-    "particle_control_start": Nt//10,
+    "particle_control_start": 5, #Nt//10,
     "particle_bf": -g0,
 
     "cntrl_p%Re_tgt": Re,

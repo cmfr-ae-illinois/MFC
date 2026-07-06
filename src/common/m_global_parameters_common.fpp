@@ -98,6 +98,8 @@ module m_global_parameters_common
     $:GPU_DECLARE(create='[Bx0]')
     $:GPU_DECLARE(create='[tau_star, cont_damage_s, alpha_bar]')
     $:GPU_DECLARE(create='[hyper_cleaning_speed, hyper_cleaning_tau]')
+    $:GPU_DECLARE(create='[periodic_forcing, forcing_wrt, mom_f_idx, forcing_window, forcing_start, u_inf_ref, rho_inf_ref, P_inf_ref, forcing_dt, fluid_volume_fraction]')
+    $:GPU_DECLARE(create='[particle_control, particle_control_start, particle_bf]')
     #:if not MFC_CASE_OPTIMIZATION
         $:GPU_DECLARE(create='[num_dims, num_vels, weno_polyn, weno_order]')
         $:GPU_DECLARE(create='[weno_num_stencils, num_fluids, wenojs]')

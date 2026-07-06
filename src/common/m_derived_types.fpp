@@ -483,8 +483,6 @@ module m_derived_types
         logical                      :: slip
         integer, dimension(3)        :: DB
         integer                      :: x_periodicity, y_periodicity, z_periodicity
-        logical                      :: ip_valid       !< ip is at a valid location (not within an immersed boundary)
-        logical                      :: gp_default     !< use default values for gp
     end type ghost_point
 
     !> Species parameters

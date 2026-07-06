@@ -267,23 +267,6 @@ module m_global_parameters
     !> @{!
     !> @}
 
-    logical              :: periodic_forcing
-    integer              :: forcing_start
-    integer              :: mom_f_idx
-    real(wp)             :: fluid_volume_fraction
-    real(wp)             :: forcing_dt
-    integer              :: forcing_window
-    logical              :: forcing_wrt
-    real(wp)             :: u_inf_ref
-    real(wp)             :: rho_inf_ref
-    real(wp)             :: P_inf_ref
-    logical              :: particle_control
-    integer              :: particle_control_start
-    real(wp)             :: particle_bf
-    type(control_params) :: cntrl_p
-
-    $:GPU_DECLARE(create='[mom_f_idx, fluid_volume_fraction, forcing_dt, forcing_window, u_inf_ref, rho_inf_ref, P_inf_ref, particle_bf]')
-
 contains
 
     !> Assigns default values to the user inputs before reading them in. This enables for an easier consistency check of these
@@ -919,6 +902,9 @@ contains
         $:GPU_UPDATE(device='[dir_idx, dir_flg, dir_idx_tau]')
 
         $:GPU_UPDATE(device='[relax, relax_model, palpha_eps, ptgalpha_eps]')
+
+        $:GPU_UPDATE(device='[periodic_forcing, forcing_wrt, mom_f_idx, forcing_window, forcing_start, u_inf_ref, rho_inf_ref, P_inf_ref, forcing_dt, fluid_volume_fraction]')
+        $:GPU_UPDATE(device='[particle_control, particle_control_start, particle_bf]')
 
         ! Allocating grid variables for the x-, y- and z-directions
         @:ALLOCATE(x_cb(-1 - buff_size:m + buff_size))
