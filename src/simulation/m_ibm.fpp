@@ -26,16 +26,13 @@ module m_ibm
 
     private :: s_compute_image_points, s_compute_interpolation_coeffs, s_interpolate_image_point, s_find_ghost_points, &
         & s_find_num_ghost_points
-    ; public :: ib_gbl_idx_lookup, s_initialize_ibm_module, s_ibm_setup, s_ibm_correct_state, s_finalize_ibm_module
+    ; public :: s_initialize_ibm_module, s_ibm_setup, s_ibm_correct_state, s_finalize_ibm_module
 
     type(integer_field), public :: ib_markers
     $:GPU_DECLARE(create='[ib_markers]')
 
     type(ghost_point), dimension(:), allocatable :: ghost_points
     $:GPU_DECLARE(create='[ghost_points]')
-
-    integer, dimension(:), allocatable :: ib_gbl_idx_lookup
-    $:GPU_DECLARE(create='[ib_gbl_idx_lookup]')
 
     integer :: num_gps  !< Number of ghost points
 #if defined(MFC_OpenACC)
@@ -72,8 +69,8 @@ contains
     !> Initializes the values of various IBM variables, such as ghost points and image points.
     impure subroutine s_ibm_setup()
 
-        integer :: i, j, k
-        integer :: max_num_gps
+        integer         :: i, j, k
+        integer(kind=8) :: max_num_gps
 
         call nvtxStartRange("SETUP-IBM-MODULE")
 
@@ -88,7 +85,7 @@ contains
         $:GPU_PARALLEL_LOOP(private='[i]')
         do i = 1, num_ibs
             if (patch_ib(i)%moving_ibm /= 0) then
-                call s_compute_moment_of_inertia(i, patch_ib(i)%angular_vel)
+                call s_compute_moment_of_inertia(patch_ib(i), patch_ib(i)%angular_vel, patch_ib(i)%moment)
             end if
             call s_update_ib_rotation_matrix(i)
         end do
@@ -119,10 +116,10 @@ contains
         ! find the number of ghost points and set them to be the maximum total across ranks
         call s_find_num_ghost_points(num_gps)
         if (moving_immersed_boundary_flag) then
-            call s_mpi_allreduce_integer_sum(num_gps, max_num_gps)
-            max_num_gps = min(max_num_gps*2, (m + 1)*(n + 1)*(p + 1))
+            call s_mpi_allreduce_integer_sum(int(num_gps, 8), max_num_gps)
+            max_num_gps = min(max_num_gps*2_8, int(m + 1, 8)*int(n + 1, 8)*int(p + 1, 8))
         else
-            max_num_gps = num_gps
+            max_num_gps = int(num_gps, 8)
         end if
 
         ! set the size of the ghost point arrays to be the amount of points total, plus a factor of 2 buffer
@@ -177,7 +174,6 @@ contains
         real(wp), dimension(3) :: vel_g              !< Velocity of GP
         real(wp), dimension(3) :: radial_vector      !< vector from centroid to ghost point
         real(wp), dimension(3) :: rotation_velocity  !< speed of the ghost point due to rotation
-        real(wp), dimension(3) :: centroid_loc
         real(wp)               :: nbub
         real(wp)               :: buf
         type(ghost_point)      :: gp
@@ -280,6 +276,17 @@ contains
                     end if
                 end if
 
+                if (patch_ib(patch_id)%moving_ibm /= 0) then
+                    ! get the vector that points from the centroid to the ghost
+                    radial_vector(1) = physical_loc(1) - (patch_ib(patch_id)%x_centroid + real(ghost_points(i)%x_periodicity, &
+                                  & wp)*(x_domain%end - x_domain%beg))
+                    radial_vector(2) = physical_loc(2) - (patch_ib(patch_id)%y_centroid + real(ghost_points(i)%y_periodicity, &
+                                  & wp)*(y_domain%end - y_domain%beg))
+                    radial_vector(3) = 0._wp
+                    if (num_dims == 3) radial_vector(3) = physical_loc(3) - (patch_ib(patch_id)%z_centroid &
+                        & + real(ghost_points(i)%z_periodicity, wp)*(z_domain%end - z_domain%beg))
+                end if
+
                 ! Calculate velocity of ghost cell
                 if (gp%slip) then
                     norm(1:3) = gp%levelset_norm
@@ -289,14 +296,6 @@ contains
                     vel_g = vel_IP - vel_norm_IP
                     if (patch_ib(patch_id)%moving_ibm /= 0) then
                         ! compute the linear velocity of the ghost point due to rotation
-                        centroid_loc(1) = patch_ib(patch_id)%x_centroid + real(gp%x_periodicity, wp)*(x_domain%end - x_domain%beg)
-                        centroid_loc(2) = patch_ib(patch_id)%y_centroid + real(gp%y_periodicity, wp)*(y_domain%end - y_domain%beg)
-                        if (p /= 0) then
-                            centroid_loc(3) = patch_ib(patch_id)%z_centroid + real(gp%z_periodicity, wp)*(z_domain%end - z_domain%beg)
-                        else
-                            centroid_loc(3) = 0._wp
-                        end if
-                        radial_vector = physical_loc - centroid_loc
                         call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
 
                         ! add only the component of the IB's motion that is normal to the surface
@@ -307,15 +306,6 @@ contains
                         ! we know the object is not moving if moving_ibm is 0 (false)
                         vel_g = 0._wp
                     else
-                        ! get the vector that points from the centroid to the ghost
-                        centroid_loc(1) = patch_ib(patch_id)%x_centroid + real(gp%x_periodicity, wp)*(x_domain%end - x_domain%beg)
-                        centroid_loc(2) = patch_ib(patch_id)%y_centroid + real(gp%y_periodicity, wp)*(y_domain%end - y_domain%beg)
-                        if (p /= 0) then
-                            centroid_loc(3) = patch_ib(patch_id)%z_centroid + real(gp%z_periodicity, wp)*(z_domain%end - z_domain%beg)
-                        else
-                            centroid_loc(3) = 0._wp
-                        end if
-                        radial_vector = physical_loc - centroid_loc
                         ! convert the angular velocity from the inertial reference frame to the fluids frame, then convert to linear
                         ! velocity
                         call s_cross_product(patch_ib(patch_id)%angular_vel, radial_vector, rotation_velocity)
@@ -501,11 +491,11 @@ contains
                     end do
 
                     ghost_points_in(q)%ip_grid(dim) = index
-                    ! if (ghost_points_in(q)%DB(dim) == -1) then
-                    !     ghost_points_in(q)%ip_grid(dim) = ghost_points_in(q)%loc(dim) + 1
-                    ! else if (ghost_points_in(q)%DB(dim) == 1) then
-                    !     ghost_points_in(q)%ip_grid(dim) = ghost_points_in(q)%loc(dim) - 1
-                    ! end if
+                    if (ghost_points_in(q)%DB(dim) == -1) then
+                        ghost_points_in(q)%ip_grid(dim) = ghost_points_in(q)%loc(dim) + 1
+                    else if (ghost_points_in(q)%DB(dim) == 1) then
+                        ghost_points_in(q)%ip_grid(dim) = ghost_points_in(q)%loc(dim) - 1
+                    end if
                 end if
             end do
         end do
@@ -870,8 +860,9 @@ contains
 
     !> Resets the current indexes of immersed boundaries and replaces them after updating
     !> the position of each moving immersed boundary
-    impure subroutine s_update_mib()
+    impure subroutine s_update_mib(num_ibs)
 
+        integer, intent(in) :: num_ibs
         integer             :: i, j, k, z_gp_layers
 
         call nvtxStartRange("UPDATE-MIBM")
@@ -917,16 +908,14 @@ contains
     !> Compute pressure and viscous forces and torques on immersed bodies via volume integration
     subroutine s_compute_ib_forces(q_prim_vf, fluid_pp)
 
-        type(scalar_field), dimension(1:sys_size), intent(in)          :: q_prim_vf
+        type(scalar_field), dimension(1:sys_size), intent(in) :: q_prim_vf
         type(physical_parameters), dimension(1:num_fluids), intent(in) :: fluid_pp
-        integer                                                        :: i, j, k, l, encoded_ib_idx, ib_idx, ib_idx_temp, fluid_idx
-        real(wp), dimension(num_ibs, 3)                                :: forces, torques
+        integer :: i, j, k, l, encoded_ib_idx, xp, yp, zp, ib_idx, ib_idx_temp, fluid_idx
+        real(wp), dimension(num_ibs, 3) :: forces, torques
         ! viscous stress tensor with temp vectors to hold divergence calculations
-        real(wp), dimension(1:3,1:3) :: viscous_stress_div, viscous_stress_div_1, viscous_stress_div_2
+        real(wp), dimension(1:3,1:3) :: viscous_stress
         real(wp), dimension(1:3)     :: local_force_contribution, radial_vector, local_torque_contribution
-        real(wp)                     :: cell_volume, dx, dy, dz, dynamic_viscosity
-        real(wp), dimension(1:3)     :: centroid_loc
-        integer                      :: xp, yp, zp
+        real(wp)                     :: cell_volume, dynamic_viscosity
 
         #:if not MFC_CASE_OPTIMIZATION and USING_AMD
             real(wp), dimension(3) :: dynamic_viscosities
@@ -949,55 +938,35 @@ contains
             end do
         end if
 
-        $:GPU_PARALLEL_LOOP(private='[i, j, k, l, ib_idx, ib_idx_temp, encoded_ib_idx, fluid_idx, radial_vector, &
+        $:GPU_PARALLEL_LOOP(private='[i, j, k, l, xp, yp, zp, ib_idx, ib_idx_temp, encoded_ib_idx, fluid_idx, radial_vector, &
                             & local_force_contribution, cell_volume, local_torque_contribution, dynamic_viscosity, &
-                            & viscous_stress_div, viscous_stress_div_1, viscous_stress_div_2, dx, dy, dz, centroid_loc, xp, yp, zp]', copy='[forces, &
-                            & torques]', copyin='[dynamic_viscosities]', collapse=3)
+                            & viscous_stress]', copy='[forces, torques]', copyin='[dynamic_viscosities]', collapse=3)
         do i = 0, m
             do j = 0, n
                 do k = 0, p
                     encoded_ib_idx = ib_markers%sf(i, j, k)
                     if (encoded_ib_idx /= 0) then
-                        ! Decode both the global IB ID and the periodic image that marked this cell
                         call s_decode_patch_periodicity(encoded_ib_idx, ib_idx_temp, xp, yp, zp)
-
-                        ! Convert global IB ID to the local-neighborhood patch_ib index
-                        call s_get_neighborhood_idx(ib_idx_temp, ib_idx)
-
+                        call s_get_neighborhood_idx(ib_idx_temp, ib_idx)  ! global patch ID -> local index
                         if (ib_idx > 0) then
-                            ! Centroid of the specific periodic image represented by encoded_ib_idx
-                            centroid_loc(1) = patch_ib(ib_idx)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg)
-                            centroid_loc(2) = patch_ib(ib_idx)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg)
-
-                            if (num_dims == 3) then
-                                centroid_loc(3) = patch_ib(ib_idx)%z_centroid + real(zp, wp)*(z_domain%end - z_domain%beg)
-                                radial_vector = [x_cc(i), y_cc(j), z_cc(k)] - centroid_loc
-                            else
-                                centroid_loc(3) = 0._wp
-                                radial_vector = [x_cc(i), y_cc(j), 0._wp] - centroid_loc
-                            end if
-
-                            dx = x_cc(i + 1) - x_cc(i)
-                            dy = y_cc(j + 1) - y_cc(j)
+                            ! get the vector pointing to the grid cell from the IB centroid
+                            radial_vector(1) = x_cc(i) - (patch_ib(ib_idx)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg))
+                            radial_vector(2) = y_cc(j) - (patch_ib(ib_idx)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg))
+                            radial_vector(3) = 0._wp
+                            if (num_dims == 3) radial_vector(3) = z_cc(k) - (patch_ib(ib_idx)%z_centroid + real(zp, &
+                                & wp)*(z_domain%end - z_domain%beg))
 
                             local_force_contribution(:) = 0._wp
-                            do fluid_idx = 0, num_fluids - 1
-                                ! Get the pressure contribution to force via a finite difference to compute the 2D components of the
-                                ! gradient of the pressure and cell volume
-                                local_force_contribution(1) = local_force_contribution(1) - (q_prim_vf(eqn_idx%E &
-                                                         & + fluid_idx)%sf(i + 1, j, &
-                                                         & k) - q_prim_vf(eqn_idx%E + fluid_idx)%sf(i - 1, j, k))/(2._wp*dx)  ! force is the negative pressure gradient
-                                local_force_contribution(2) = local_force_contribution(2) - (q_prim_vf(eqn_idx%E &
-                                                         & + fluid_idx)%sf(i, j + 1, k) - q_prim_vf(eqn_idx%E + fluid_idx)%sf(i, &
-                                                         & j - 1, k))/(2._wp*dy)
-                                cell_volume = abs(dx*dy)
-                                ! add the 3D component of the pressure gradient, if we are working in 3 dimensions
+
+                            ! compute the pressure force component, which is the negative pressure gradient
+                            do l = -fd_number, fd_number
+                                local_force_contribution(1) = local_force_contribution(1) - (fd_coeff_x(l, &
+                                                         & i)*q_prim_vf(eqn_idx%E)%sf(i + l, j, k))
+                                local_force_contribution(2) = local_force_contribution(2) - (fd_coeff_y(l, &
+                                                         & j)*q_prim_vf(eqn_idx%E)%sf(i, j + l, k))
                                 if (num_dims == 3) then
-                                    dz = z_cc(k + 1) - z_cc(k)
-                                    local_force_contribution(3) = local_force_contribution(3) - (q_prim_vf(eqn_idx%E &
-                                                             & + fluid_idx)%sf(i, j, &
-                                                             & k + 1) - q_prim_vf(eqn_idx%E + fluid_idx)%sf(i, j, k - 1))/(2._wp*dz)
-                                    cell_volume = abs(cell_volume*dz)
+                                    local_force_contribution(3) = local_force_contribution(3) - (fd_coeff_z(l, &
+                                                             & k)*q_prim_vf(eqn_idx%E)%sf(i, j, k + l))
                                 end if
                             end do
 
@@ -1011,41 +980,30 @@ contains
                                         & k)*dynamic_viscosities(fluid_idx))
                                 end do
 
-                                ! get the linear force components first
-                                call s_compute_viscous_stress_tensor(viscous_stress_div_1, q_prim_vf, dynamic_viscosity, i - 1, &
-                                                                     & j, k)
-                                call s_compute_viscous_stress_tensor(viscous_stress_div_2, q_prim_vf, dynamic_viscosity, i + 1, &
-                                                                     & j, k)
-                                ! get x derivative of the first-row of viscous stress tensor
-                                viscous_stress_div(1,1:3) = (viscous_stress_div_2(1,1:3) - viscous_stress_div_1(1,1:3))/(2._wp*dx)
-                                ! add the x components of the divergence to the force
-                                local_force_contribution(1:3) = local_force_contribution(1:3) + viscous_stress_div(1,1:3)
+                                do l = -fd_number, fd_number
+                                    call s_compute_viscous_stress_tensor(viscous_stress, q_prim_vf, dynamic_viscosity, i + l, j, k)
+                                    local_force_contribution(1:3) = local_force_contribution(1:3) + fd_coeff_x(l, &
+                                                             & i)*viscous_stress(1,1:3)
 
-                                call s_compute_viscous_stress_tensor(viscous_stress_div_1, q_prim_vf, dynamic_viscosity, i, &
-                                                                     & j - 1, k)
-                                call s_compute_viscous_stress_tensor(viscous_stress_div_2, q_prim_vf, dynamic_viscosity, i, &
-                                                                     & j + 1, k)
-                                ! get y derivative of the second-row of viscous stress tensor
-                                viscous_stress_div(2,1:3) = (viscous_stress_div_2(2,1:3) - viscous_stress_div_1(2,1:3))/(2._wp*dy)
-                                ! add the y components of the divergence to the force
-                                local_force_contribution(1:3) = local_force_contribution(1:3) + viscous_stress_div(2,1:3)
+                                    call s_compute_viscous_stress_tensor(viscous_stress, q_prim_vf, dynamic_viscosity, i, j + l, k)
+                                    local_force_contribution(1:3) = local_force_contribution(1:3) + fd_coeff_y(l, &
+                                                             & j)*viscous_stress(2,1:3)
 
-                                if (num_dims == 3) then
-                                    call s_compute_viscous_stress_tensor(viscous_stress_div_1, q_prim_vf, dynamic_viscosity, i, &
-                                                                         & j, k - 1)
-                                    call s_compute_viscous_stress_tensor(viscous_stress_div_2, q_prim_vf, dynamic_viscosity, i, &
-                                                                         & j, k + 1)
-                                    viscous_stress_div(3,1:3) = (viscous_stress_div_2(3,1:3) - viscous_stress_div_1(3, &
-                                                       & 1:3))/(2._wp*dz)
-                                    ! add the z components of the divergence to the force
-                                    local_force_contribution(1:3) = local_force_contribution(1:3) + viscous_stress_div(3,1:3)
-                                end if
+                                    if (num_dims == 3) then
+                                        call s_compute_viscous_stress_tensor(viscous_stress, q_prim_vf, dynamic_viscosity, i, j, &
+                                                                             & k + l)
+                                        local_force_contribution(1:3) = local_force_contribution(1:3) + fd_coeff_z(l, &
+                                                                 & k)*viscous_stress(3,1:3)
+                                    end if
+                                end do
                             end if
 
                             call s_cross_product(radial_vector, local_force_contribution, local_torque_contribution)
 
                             ! Update the force and torque values atomically to prevent race conditions
-                            do l = 1, 3
+                            cell_volume = dx(i)*dy(j)
+                            if (num_dims == 3) cell_volume = cell_volume*dz(k)
+                            do l = 1, num_dims
                                 $:GPU_ATOMIC(atomic='update')
                                 forces(ib_idx, l) = forces(ib_idx, l) + (local_force_contribution(l)*cell_volume)
                                 $:GPU_ATOMIC(atomic='update')
@@ -1061,9 +1019,7 @@ contains
         call s_apply_collision_forces(ghost_points, num_gps, ib_markers, forces, torques)
 
         ! reduce the forces across local neighborhood ranks
-        ! call s_communicate_ib_forces(forces, torques)
-
-        call s_allreduce_ib_forces_by_global_id(forces, torques)
+        call s_communicate_ib_forces(forces, torques)
 
         ! consider body forces after reducing to avoid double counting
         do i = 1, num_ibs
@@ -1099,7 +1055,8 @@ contains
     subroutine s_compute_centroid_offset(ib_marker)
 
         integer, intent(in)      :: ib_marker
-        integer                  :: i, j, k, num_cells, num_cells_local, decoded_gbl_id
+        integer                  :: i, j, k, num_cells_local, decoded_gbl_id
+        integer(kind=8)          :: num_cells
         real(wp), dimension(1:3) :: center_of_mass, center_of_mass_local
 
         ! Offset only needs to be computes for specific geometries
@@ -1126,7 +1083,7 @@ contains
             end do
 
             ! reduce the mass contribution over all MPI ranks and compute COM
-            call s_mpi_allreduce_integer_sum(num_cells_local, num_cells)
+            call s_mpi_allreduce_integer_sum(int(num_cells_local, 8), num_cells)
             if (num_cells /= 0) then
                 call s_mpi_allreduce_sum(center_of_mass_local(1), center_of_mass(1))
                 call s_mpi_allreduce_sum(center_of_mass_local(2), center_of_mass(2))
@@ -1155,45 +1112,47 @@ contains
     end subroutine s_compute_centroid_offset
 
     !> Computes the moment of inertia for an immersed boundary
-    subroutine s_compute_moment_of_inertia(ib_idx, axis)
+    subroutine s_compute_moment_of_inertia(patch, axis, moment)
 
         $:GPU_ROUTINE(parallelism='[seq]')
 
-        real(wp), dimension(3), intent(in) :: axis  !< the axis about which we compute the moment. Only required in 3D.
-        integer, intent(in)                :: ib_idx
-        real(wp)                           :: moment, distance_to_axis, cell_volume
-        real(wp), dimension(3)             :: position, closest_point_along_axis, vector_to_axis, normal_axis
-        integer                            :: i, j, k, count, ib_marker
+        type(ib_patch_parameters), intent(in) :: patch
+        real(wp), dimension(3), intent(in)    :: axis
+        real(wp), intent(out)                 :: moment
+        real(wp)                              :: distance_to_axis, cell_volume
+        real(wp), dimension(3)                :: position, closest_point_along_axis, vector_to_axis, normal_axis
+        integer                               :: i, j, k, count, ib_marker
 
         ! if the IB is in 2D or a 3D sphere, we can compute this exactly
-        if (patch_ib(ib_idx)%geometry == 2) then  ! circle
-            patch_ib(ib_idx)%moment = 0.5_wp*patch_ib(ib_idx)%mass*(patch_ib(ib_idx)%radius)**2
-        else if (patch_ib(ib_idx)%geometry == 3) then  ! rectangle
-            patch_ib(ib_idx)%moment = patch_ib(ib_idx)%mass*(patch_ib(ib_idx)%length_x**2 + patch_ib(ib_idx) %length_y**2)/6._wp
-        else if (patch_ib(ib_idx)%geometry == 6) then  ! ellipse
-            patch_ib(ib_idx)%moment = 0.0625_wp*patch_ib(ib_idx)%mass*(patch_ib(ib_idx)%length_x**2 + patch_ib(ib_idx) %length_y**2)
-        else if (patch_ib(ib_idx)%geometry == 8) then  ! sphere
-            patch_ib(ib_idx)%moment = 0.4*patch_ib(ib_idx)%mass*(patch_ib(ib_idx)%radius)**2
+        if (patch%geometry == 2) then  ! circle
+            moment = 0.5_wp*patch%mass*(patch%radius)**2
+        else if (patch%geometry == 3) then  ! rectangle
+            moment = patch%mass*(patch%length_x**2 + patch %length_y**2)/6._wp
+        else if (patch%geometry == 6) then  ! ellipse
+            moment = 0.0625_wp*patch%mass*(patch%length_x**2 + patch %length_y**2)
+        else if (patch%geometry == 8) then  ! sphere
+            moment = 0.4*patch%mass*(patch%radius)**2
         else  ! we do not have an analytic moment of inertia calculation and need to approximate it directly via a sum
             count = 0
-            moment = 0._wp
             cell_volume = (x_cc(1) - x_cc(0))*(y_cc(1) - y_cc(0))
             ! computed without grid stretching. Update in the loop to perform with stretching
             if (p /= 0) then
                 cell_volume = cell_volume*(z_cc(1) - z_cc(0))
             end if
 
-            ib_marker = patch_ib(ib_idx)%gbl_patch_id
+            ib_marker = patch%gbl_patch_id
 
             if (p == 0) then
                 normal_axis = [0, 0, 1]
             else if (sqrt(sum(axis**2)) < sgm_eps) then
                 ! if the object is not actually rotating at this time, return a dummy value and exit
-                patch_ib(ib_idx)%moment = 1._wp
+                moment = 1._wp
                 return
             else
                 normal_axis = axis/sqrt(sum(axis**2))
             end if
+
+            moment = 0._wp
 
             do i = 0, m
                 do j = 0, n
@@ -1203,11 +1162,9 @@ contains
 
                             ! get the position in local coordinates so that the axis passes through 0, 0, 0
                             if (num_dims < 3) then
-                                position = [x_cc(i), y_cc(j), 0._wp] - [patch_ib(ib_idx)%x_centroid, patch_ib(ib_idx)%y_centroid, &
-                                                 & 0._wp]
+                                position = [x_cc(i), y_cc(j), 0._wp] - [patch%x_centroid, patch%y_centroid, 0._wp]
                             else
-                                position = [x_cc(i), y_cc(j), z_cc(k)] - [patch_ib(ib_idx)%x_centroid, &
-                                                 & patch_ib(ib_idx)%y_centroid, patch_ib(ib_idx)%z_centroid]
+                                position = [x_cc(i), y_cc(j), z_cc(k)] - [patch%x_centroid, patch%y_centroid, patch%z_centroid]
                             end if
 
                             ! project the position along the axis to find the closest distance to the rotation axis
@@ -1223,7 +1180,7 @@ contains
             end do
 
             ! write the final moment assuming the points are all uniform density
-            patch_ib(ib_idx)%moment = moment*patch_ib(ib_idx)%mass/(count*cell_volume)
+            moment = moment*patch%mass/(count*cell_volume)
         end if
 
     end subroutine s_compute_moment_of_inertia
@@ -1231,31 +1188,30 @@ contains
     !> Wrap immersed boundary positions across periodic domain boundaries
     subroutine s_wrap_periodic_ibs()
 
-        integer :: i, patch_id
+        integer :: patch_id
 
-        do i = 1, num_local_ibs
-            patch_id = local_ib_patch_ids(i)
-
-            #:for X in [('x'), ('y')]
-                if (ib_bc_${X}$%beg == BC_PERIODIC) then
-                    if (patch_ib(patch_id)%${X}$_centroid < ${X}$_domain%beg) then
-                        patch_ib(patch_id)%${X}$_centroid = patch_ib(patch_id)%${X}$_centroid + (${X}$_domain%end - ${X}$_domain%beg)
-
-                    else if (patch_ib(patch_id)%${X}$_centroid > ${X}$_domain%end) then
-                        patch_ib(patch_id)%${X}$_centroid = patch_ib(patch_id)%${X}$_centroid - (${X}$_domain%end - ${X}$_domain%beg)
+        $:GPU_PARALLEL_LOOP(private='[patch_id]')
+        do patch_id = 1, num_ibs
+            ! check domain wraps in x, y,
+            #:for X, ID in [('x', 1), ('y', 2), ('z', 3)]
+                if (num_dims >= ${ID}$) then
+                    ! check for periodicity
+                    if (ib_bc_${X}$%beg == BC_PERIODIC) then
+                        ! check if the boundary has left the domain, and then correct
+                        if (patch_ib(patch_id)%${X}$_centroid < ${X}$_domain%beg) then
+                            ! if the boundary exited "left", wrap it back around to the "right"
+                            patch_ib(patch_id)%${X}$_centroid = patch_ib(patch_id)%${X}$_centroid + (${X}$_domain%end &
+                                     & - ${X}$_domain%beg)
+                        else if (patch_ib(patch_id)%${X}$_centroid > ${X}$_domain%end) then
+                            ! if the boundary exited "right", wrap it back around to the "left"
+                            patch_ib(patch_id)%${X}$_centroid = patch_ib(patch_id)%${X}$_centroid - (${X}$_domain%end &
+                                     & - ${X}$_domain%beg)
+                        end if
                     end if
                 end if
             #:endfor
-
-            if (p /= 0 .and. ib_bc_z%beg == BC_PERIODIC) then
-                if (patch_ib(patch_id)%z_centroid < z_domain%beg) then
-                    patch_ib(patch_id)%z_centroid = patch_ib(patch_id)%z_centroid + (z_domain%end - z_domain%beg)
-
-                else if (patch_ib(patch_id)%z_centroid > z_domain%end) then
-                    patch_ib(patch_id)%z_centroid = patch_ib(patch_id)%z_centroid - (z_domain%end - z_domain%beg)
-                end if
-            end if
         end do
+        $:END_GPU_PARALLEL_LOOP()
 
     end subroutine s_wrap_periodic_ibs
 
@@ -1289,7 +1245,7 @@ contains
                 recv_torques_snap = 0._wp
                 tag = 300
 
-                do k = 1, 2*ib_neighborhood_radius
+                do k = 1, min(2*ib_neighborhood_radius, num_procs_${X}$ - 1)
                     ! send forces to +${X}$ neighbor; receive from -${X}$ neighbor. Add received values then
                     pack_pos = 0
                     $:GPU_PARALLEL_LOOP(private='[i]', copyin='[forces, torques]')
@@ -1337,7 +1293,7 @@ contains
                 send_neighbor = merge(bc_${X}$%beg, MPI_PROC_NULL, bc_${X}$%beg >= 0)
                 recv_neighbor = merge(bc_${X}$%end, MPI_PROC_NULL, bc_${X}$%end >= 0)
 
-                do k = 1, 2*ib_neighborhood_radius
+                do k = 1, min(2*ib_neighborhood_radius, num_procs_${X}$ - 1)
                     pack_pos = 0
                     $:GPU_PARALLEL_LOOP(private='[i]', copyin='[forces, torques]')
                     do i = 1, num_ibs
@@ -1376,411 +1332,149 @@ contains
 
     end subroutine s_communicate_ib_forces
 
-    subroutine s_allreduce_ib_forces_by_global_id(forces, torques)
-
-        real(wp), dimension(num_ibs, 3), intent(inout) :: forces, torques
-
-        real(wp), allocatable :: forces_gbl(:,:), torques_gbl(:,:)
-        logical, allocatable  :: gbl_seen(:)
-        integer              :: i, gbl_id
-
-        @:ALLOCATE(forces_gbl(num_gbl_ibs, 3))
-        @:ALLOCATE(torques_gbl(num_gbl_ibs, 3))
-        @:ALLOCATE(gbl_seen(num_gbl_ibs))
-
-        forces_gbl = 0._wp
-        torques_gbl = 0._wp
-        gbl_seen = .false.
-
-        ! Each rank should contain at most one rank-local entry for each
-        ! physical IB global ID. Its force is this rank's cellwise contribution.
-        do i = 1, num_ibs
-            gbl_id = patch_ib(i)%gbl_patch_id
-
-            @:ASSERT(gbl_id >= 1 .and. gbl_id <= num_gbl_ibs, &
-                     & 'Invalid global IB ID in force reduction')
-
-            @:ASSERT(.not. gbl_seen(gbl_id), &
-                     & 'Duplicate global IB ID on one rank in force reduction')
-
-            gbl_seen(gbl_id) = .true.
-
-            forces_gbl(gbl_id, :) = forces(i, :)
-            torques_gbl(gbl_id, :) = torques(i, :)
-        end do
-
-        ! Sum all cellwise contributions from all ranks.
-        call s_mpi_allreduce_vectors_sum(forces_gbl, forces_gbl, num_gbl_ibs, 3)
-        call s_mpi_allreduce_vectors_sum(torques_gbl, torques_gbl, num_gbl_ibs, 3)
-
-        ! Every rank-local replica receives the same complete force/torque.
-        do i = 1, num_ibs
-            gbl_id = patch_ib(i)%gbl_patch_id
-
-            forces(i, :) = forces_gbl(gbl_id, :)
-            torques(i, :) = torques_gbl(gbl_id, :)
-        end do
-
-        @:DEALLOCATE(forces_gbl)
-        @:DEALLOCATE(torques_gbl)
-        @:DEALLOCATE(gbl_seen)
-
-    end subroutine s_allreduce_ib_forces_by_global_id
-
     subroutine s_handoff_ib_ownership()
 
-        integer                               :: i, j, k
-        integer                               :: output_idx, local_output_idx
-        integer                               :: recv_count
+        integer                               :: i, j, k, output_idx, local_output_idx
+        integer                               :: old_num_local_ibs
+        integer                               :: new_count, recv_count
         integer                               :: pack_pos, unpack_pos, buf_size, patch_bytes
         integer                               :: send_neighbor, recv_neighbor, ierr
-        integer                               :: dx, dy, dz, tag, nbr_idx, nreqs, n_nbrs
+        integer                               :: dx, dy, dz, tag, nbr_idx, nreqs
         real(wp), dimension(3)                :: centroid
+        logical                               :: is_new
         type(ib_patch_parameters)             :: tmp_patch
-
-        ! 26 neighbors in 3D; 8 neighbors in 2D
-        integer, parameter                    :: max_nbrs = 26
-        character(len=1), allocatable         :: send_buf(:), recv_bufs(:,:)
-        integer, dimension(2*max_nbrs)        :: requests
-        integer, dimension(max_nbrs)          :: recv_neighbor_list
+        integer, dimension(num_local_ibs_max) :: local_ib_idx_old
+        ! 26 neighbors max in 3D (8 in 2D); each gets its own recv buffer
+        integer, parameter             :: max_nbrs = 26
+        character(len=1), allocatable  :: send_buf(:), recv_bufs(:,:)
+        integer, dimension(2*max_nbrs) :: requests
+        integer, dimension(max_nbrs)   :: recv_neighbor_list
 
 #ifdef MFC_MPI
-        if (num_procs <= 1) return
+        if (num_procs > 1) then
+            ! save a copy of the local IB's global indices to cross-reference for later.
+            local_ib_idx_old = 0
+            old_num_local_ibs = num_local_ibs
+            do i = 1, num_local_ibs
+                local_ib_idx_old(i) = patch_ib(local_ib_patch_ids(i))%gbl_patch_id
+            end do
 
-        n_nbrs = merge(26, 8, num_dims == 3)
+            ! delete any particles that no longer need to be tracked and coalesce the array
+            output_idx = 0
+            local_output_idx = 0
+            do i = 1, num_ibs
+                centroid = [patch_ib(i)%x_centroid, patch_ib(i)%y_centroid, 0._wp]
+                if (num_dims == 3) centroid(3) = patch_ib(i)%z_centroid
 
-        ! Rebuild a host-valid lookup for the current, pre-handoff list.
-        ! This lets received IB states overwrite an existing replica.
-        ib_gbl_idx_lookup = -1
+                ! delete if not in neighborhood
+                if (f_neighborhood_ranks_own_location(centroid)) then
+                    output_idx = output_idx + 1
+                    if (i /= output_idx) then
+                        patch_ib(output_idx) = patch_ib(i)
+                    end if
 
-        do i = 1, num_ibs
-            ib_gbl_idx_lookup(patch_ib(i)%gbl_patch_id) = i
-        end do
+                    ! check if in local domain
+                    if (f_local_rank_owns_location(centroid)) then
+                        local_output_idx = local_output_idx + 1
+                        local_ib_patch_ids(local_output_idx) = output_idx
+                    end if
+                end if
+            end do
+            num_ibs = output_idx
+            num_local_ibs = local_output_idx
+            $:GPU_UPDATE(device='[patch_ib]')
+            call s_update_ib_lookup()
 
-        !------------------------------------------------------------------
-        ! Pack every currently owned IB.
-        !
-        ! The same packed owner-state message is sent to every neighboring
-        ! rank. Recipients retain only the particles actually in their local
-        ! neighborhood during the compaction step below.
-        !------------------------------------------------------------------
+            ! Broadcast newly-owned patches to all neighborhood neighbors
+            patch_bytes = storage_size(tmp_patch)/8
+            buf_size = storage_size(0)/8 + patch_bytes*num_local_ibs_max
+            allocate (send_buf(buf_size), recv_bufs(buf_size, max_nbrs))
 
-        patch_bytes = storage_size(tmp_patch)/8
-        buf_size = storage_size(0)/8 + patch_bytes*num_local_ibs_max
+            ! Write placeholder count at position 0
+            pack_pos = 0
+            call MPI_PACK(0, 1, MPI_INTEGER, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
 
-        allocate(send_buf(buf_size), recv_bufs(buf_size, max_nbrs))
+            ! pack new patches and count them
+            new_count = 0
+            do i = 1, num_local_ibs
+                k = local_ib_patch_ids(i)
+                is_new = .true.
+                do j = 1, old_num_local_ibs
+                    if (patch_ib(k)%gbl_patch_id == local_ib_idx_old(j)) then
+                        is_new = .false.
+                        exit
+                    end if
+                end do
+                if (is_new) then
+                    call MPI_PACK(patch_ib(k), patch_bytes, MPI_BYTE, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
+                    new_count = new_count + 1
+                end if
+            end do
 
-        pack_pos = 0
+            ! Overwrite the placeholder with the real count
+            pack_pos = 0
+            call MPI_PACK(new_count, 1, MPI_INTEGER, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
+            pack_pos = storage_size(0)/8 + new_count*patch_bytes
 
-        call MPI_PACK(num_local_ibs, 1, MPI_INTEGER, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
-
-        do i = 1, num_local_ibs
-            k = local_ib_patch_ids(i)
-
-            @:ASSERT(k >= 1 .and. k <= num_ibs, 'Invalid local IB patch index during ownership handoff')
-
-            call MPI_PACK(patch_ib(k), patch_bytes, MPI_BYTE, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
-        end do
-
-        ! pack_pos is the exact packed message length.
-        ! Do not overwrite the header with a "new_count" and do not manually
-        ! reconstruct pack_pos.
-
-        !------------------------------------------------------------------
-        ! Post all receives before issuing sends.
-        !
-        ! A message sent in direction (dx,dy,dz) uses a tag based on that
-        ! direction. The receiving rank requests the corresponding message
-        ! from its neighbor in direction (-dx,-dy,-dz).
-        !------------------------------------------------------------------
-
-        nreqs = 0
-        nbr_idx = 0
-        recv_neighbor_list = MPI_PROC_NULL
-
-        do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
-            do dy = -1, 1
-                do dx = -1, 1
-                    if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
-
-                    nbr_idx = nbr_idx + 1
-
-                    tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
-
-                    recv_neighbor = ib_neighbor_ranks(-dx, -dy, -dz)
-
-                    if (recv_neighbor < 0) cycle
-
-                    recv_neighbor_list(nbr_idx) = recv_neighbor
-
-                    nreqs = nreqs + 1
-
-                    call MPI_IRECV(recv_bufs(:, nbr_idx), buf_size, MPI_PACKED, recv_neighbor, tag, MPI_COMM_WORLD, &
-                                   & requests(nreqs), ierr)
+            ! Post all receives first, then sends
+            nreqs = 0
+            nbr_idx = 0
+            do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
+                do dy = -1, 1
+                    do dx = -1, 1
+                        if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
+                        nbr_idx = nbr_idx + 1
+                        tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
+                        recv_neighbor = ib_neighbor_ranks(-dx, -dy, -dz)
+                        recv_neighbor_list(nbr_idx) = MPI_PROC_NULL
+                        if (recv_neighbor < 0) cycle
+                        recv_neighbor_list(nbr_idx) = recv_neighbor
+                        nreqs = nreqs + 1
+                        call MPI_IRECV(recv_bufs(:,nbr_idx), buf_size, MPI_PACKED, recv_neighbor, tag, MPI_COMM_WORLD, &
+                                       & requests(nreqs), ierr)
+                    end do
                 end do
             end do
-        end do
 
-        do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
-            do dy = -1, 1
-                do dx = -1, 1
-                    if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
-
-                    tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
-
-                    send_neighbor = ib_neighbor_ranks(dx, dy, dz)
-
-                    if (send_neighbor < 0) cycle
-
-                    nreqs = nreqs + 1
-
-                    call MPI_ISEND(send_buf, pack_pos, MPI_PACKED, send_neighbor, tag, MPI_COMM_WORLD, &
-                                   & requests(nreqs), ierr)
+            do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
+                do dy = -1, 1
+                    do dx = -1, 1
+                        if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
+                        tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
+                        send_neighbor = ib_neighbor_ranks(dx, dy, dz)
+                        if (send_neighbor < 0) cycle
+                        nreqs = nreqs + 1
+                        call MPI_ISEND(send_buf, pack_pos, MPI_PACKED, send_neighbor, tag, MPI_COMM_WORLD, requests(nreqs), ierr)
+                    end do
                 end do
             end do
-        end do
 
-        if (nreqs > 0) then
             call MPI_WAITALL(nreqs, requests, MPI_STATUSES_IGNORE, ierr)
-        end if
 
-        !------------------------------------------------------------------
-        ! Refresh existing replicas and append genuinely new particles.
-        !------------------------------------------------------------------
-
-        do nbr_idx = 1, n_nbrs
-            if (recv_neighbor_list(nbr_idx) == MPI_PROC_NULL) cycle
-
-            unpack_pos = 0
-
-            call MPI_UNPACK(recv_bufs(:, nbr_idx), buf_size, unpack_pos, recv_count, 1, MPI_INTEGER, MPI_COMM_WORLD, ierr)
-
-            @:ASSERT(recv_count >= 0 .and. recv_count <= num_local_ibs_max, &
-                     & 'Invalid IB receive count during ownership handoff')
-
-            do i = 1, recv_count
-                call MPI_UNPACK(recv_bufs(:, nbr_idx), buf_size, unpack_pos, tmp_patch, patch_bytes, MPI_BYTE, &
-                                & MPI_COMM_WORLD, ierr)
-
-                call s_get_neighborhood_idx(tmp_patch%gbl_patch_id, j)
-
-                if (j > 0) then
-                    ! Existing local/neighbor copy: replace stale geometry,
-                    ! velocity, orientation, force, and angular state.
-                    patch_ib(j) = tmp_patch
-                else
-                    ! Newly relevant particle: append it to this rank's
-                    ! temporary patch list.
-                    num_ibs = num_ibs + 1
-
-                    @:ASSERT(num_ibs <= size(patch_ib), 'patch_ib overflow in neighborhood handoff')
-
-                    patch_ib(num_ibs) = tmp_patch
-
-                    ! Keep the host lookup valid while processing later
-                    ! incoming packets in this same handoff.
-                    ib_gbl_idx_lookup(tmp_patch%gbl_patch_id) = num_ibs
-                end if
+            ! Unpack all received buffers
+            do nbr_idx = 1, merge(26, 8, num_dims == 3)
+                if (recv_neighbor_list(nbr_idx) == MPI_PROC_NULL) cycle
+                unpack_pos = 0
+                call MPI_UNPACK(recv_bufs(:,nbr_idx), buf_size, unpack_pos, recv_count, 1, MPI_INTEGER, MPI_COMM_WORLD, ierr)
+                do i = 1, recv_count
+                    call MPI_UNPACK(recv_bufs(:,nbr_idx), buf_size, unpack_pos, tmp_patch, patch_bytes, MPI_BYTE, MPI_COMM_WORLD, &
+                                    & ierr)
+                    call s_get_neighborhood_idx(tmp_patch%gbl_patch_id, j)
+                    if (j < 0) then
+                        num_ibs = num_ibs + 1
+                        @:ASSERT(num_ibs <= size(patch_ib), 'patch_ib overflow in neighborhood handoff')
+                        patch_ib(num_ibs) = tmp_patch
+                    end if
+                end do
             end do
-        end do
 
-        !------------------------------------------------------------------
-        ! Now prune stale replicas and determine ownership for the NEXT step.
-        !
-        ! At this point, every retained particle has its current owner state.
-        !------------------------------------------------------------------
-
-        output_idx = 0
-        local_output_idx = 0
-
-        do i = 1, num_ibs
-            centroid = [patch_ib(i)%x_centroid, patch_ib(i)%y_centroid, 0._wp]
-
-            if (num_dims == 3) then
-                centroid(3) = patch_ib(i)%z_centroid
-            end if
-
-            ! Keep only particles needed by this rank or one of its direct
-            ! neighborhood ranks. This function must account for periodic
-            ! rank connectivity.
-            if (f_neighborhood_ranks_own_location(centroid)) then
-                output_idx = output_idx + 1
-
-                if (i /= output_idx) then
-                    patch_ib(output_idx) = patch_ib(i)
-                end if
-
-                ! This rank becomes the unique owner for the next update
-                ! when the centroid lies in its locally owned subdomain.
-                if (f_local_rank_owns_location(centroid)) then
-                    local_output_idx = local_output_idx + 1
-
-                    @:ASSERT(local_output_idx <= size(local_ib_patch_ids), &
-                             & 'local_ib_patch_ids overflow in ownership handoff')
-
-                    local_ib_patch_ids(local_output_idx) = output_idx
-                end if
-            end if
-        end do
-
-        num_ibs = output_idx
-        num_local_ibs = local_output_idx
-
-        deallocate(send_buf, recv_bufs)
-
-        !------------------------------------------------------------------
-        ! Synchronize the refreshed rank-local representation to the device.
-        !
-        ! s_update_ib_lookup() uses a GPU loop bounded by num_ibs, so
-        ! num_ibs must be current on the device before calling it.
-        !------------------------------------------------------------------
-
-        $:GPU_UPDATE(device='[num_ibs, num_local_ibs, patch_ib, local_ib_patch_ids]')
-
-        call s_update_ib_lookup()
-
+            deallocate (send_buf, recv_bufs)
+            $:GPU_UPDATE(device='[patch_ib]')
+            call s_update_ib_lookup()
+        end if
 #endif
 
     end subroutine s_handoff_ib_ownership
-
-!     subroutine s_handoff_ib_ownership()
-
-!         integer                               :: i, j, k, output_idx, local_output_idx
-!         integer                               :: recv_count
-!         integer                               :: pack_pos, unpack_pos, buf_size, patch_bytes
-!         integer                               :: send_neighbor, recv_neighbor, ierr
-!         integer                               :: dx, dy, dz, tag, nbr_idx, nreqs
-!         real(wp), dimension(3)                :: centroid
-!         type(ib_patch_parameters)             :: tmp_patch
-!         ! 26 neighbors max in 3D (8 in 2D); each gets its own recv buffer
-!         integer, parameter             :: max_nbrs = 26
-!         character(len=1), allocatable  :: send_buf(:), recv_bufs(:,:)
-!         integer, dimension(2*max_nbrs) :: requests
-!         integer, dimension(max_nbrs)   :: recv_neighbor_list
-
-! #ifdef MFC_MPI
-!         if (num_procs > 1) then
-!             ! save a copy of the local IB's global indices to cross-reference for later.
-!             local_ib_idx_old = 0
-!             old_num_local_ibs = num_local_ibs
-!             do i = 1, num_local_ibs
-!                 local_ib_idx_old(i) = patch_ib(local_ib_patch_ids(i))%gbl_patch_id
-!             end do
-
-!             ! Broadcast newly-owned patches to all neighborhood neighbors
-!             patch_bytes = storage_size(tmp_patch)/8
-!             buf_size = storage_size(0)/8 + patch_bytes*num_local_ibs_max
-!             allocate (send_buf(buf_size), recv_bufs(buf_size, max_nbrs))
-
-!             ! Write placeholder count at position 0
-!             pack_pos = 0
-
-!             call MPI_PACK(num_local_ibs, 1, MPI_INTEGER, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
-
-!             do i = 1, num_local_ibs
-!                 k = local_ib_patch_ids(i)
-
-!                 call MPI_PACK(patch_ib(k), patch_bytes, MPI_BYTE, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
-!             end do
-
-!             ! Overwrite the placeholder with the real count
-!             pack_pos = 0
-!             call MPI_PACK(new_count, 1, MPI_INTEGER, send_buf, buf_size, pack_pos, MPI_COMM_WORLD, ierr)
-!             pack_pos = storage_size(0)/8 + new_count*patch_bytes
-
-!             ! Post all receives first, then sends
-!             nreqs = 0
-!             nbr_idx = 0
-!             do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
-!                 do dy = -1, 1
-!                     do dx = -1, 1
-!                         if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
-!                         nbr_idx = nbr_idx + 1
-!                         tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
-!                         recv_neighbor = ib_neighbor_ranks(-dx, -dy, -dz)
-!                         recv_neighbor_list(nbr_idx) = MPI_PROC_NULL
-!                         if (recv_neighbor < 0) cycle
-!                         recv_neighbor_list(nbr_idx) = recv_neighbor
-!                         nreqs = nreqs + 1
-!                         call MPI_IRECV(recv_bufs(:,nbr_idx), buf_size, MPI_PACKED, recv_neighbor, tag, MPI_COMM_WORLD, &
-!                                        & requests(nreqs), ierr)
-!                     end do
-!                 end do
-!             end do
-
-!             do dz = merge(-1, 0, num_dims == 3), merge(1, 0, num_dims == 3)
-!                 do dy = -1, 1
-!                     do dx = -1, 1
-!                         if (dx == 0 .and. dy == 0 .and. dz == 0) cycle
-!                         tag = 200 + (dx + 1)*9 + (dy + 1)*3 + (dz + 1)
-!                         send_neighbor = ib_neighbor_ranks(dx, dy, dz)
-!                         if (send_neighbor < 0) cycle
-!                         nreqs = nreqs + 1
-!                         call MPI_ISEND(send_buf, pack_pos, MPI_PACKED, send_neighbor, tag, MPI_COMM_WORLD, requests(nreqs), ierr)
-!                     end do
-!                 end do
-!             end do
-
-!             call MPI_WAITALL(nreqs, requests, MPI_STATUSES_IGNORE, ierr)
-
-!             ! Unpack all received buffers
-!             do nbr_idx = 1, merge(26, 8, num_dims == 3)
-!                 if (recv_neighbor_list(nbr_idx) == MPI_PROC_NULL) cycle
-!                 unpack_pos = 0
-!                 call MPI_UNPACK(recv_bufs(:,nbr_idx), buf_size, unpack_pos, recv_count, 1, MPI_INTEGER, MPI_COMM_WORLD, ierr)
-!                 do i = 1, recv_count
-!                     call MPI_UNPACK(recv_bufs(:,nbr_idx), buf_size, unpack_pos, tmp_patch, patch_bytes, MPI_BYTE, MPI_COMM_WORLD, &
-!                                     & ierr)
-!                     call s_get_neighborhood_idx(tmp_patch%gbl_patch_id, j)
-!                     if (j > 0) then
-!                         ! Existing neighborhood replica: refresh it with the owner's current state.
-!                         patch_ib(j) = tmp_patch
-!                     else
-!                         ! New particle entering this rank's neighborhood.
-!                         num_ibs = num_ibs + 1
-!                         @:ASSERT(num_ibs <= size(patch_ib), 'patch_ib overflow in neighborhood handoff')
-
-!                         patch_ib(num_ibs) = tmp_patch
-
-!                         ! Keep the host lookup current while unpacking subsequent messages.
-!                         ib_gbl_idx_lookup(tmp_patch%gbl_patch_id) = num_ibs
-!                     end if
-!                 end do
-!             end do
-
-!             deallocate (send_buf, recv_bufs)
-!             $:GPU_UPDATE(device='[patch_ib]')
-!             call s_update_ib_lookup()
-
-!             ! delete any particles that no longer need to be tracked and coalesce the array
-!             output_idx = 0
-!             local_output_idx = 0
-!             do i = 1, num_ibs
-!                 centroid = [patch_ib(i)%x_centroid, patch_ib(i)%y_centroid, 0._wp]
-!                 if (num_dims == 3) centroid(3) = patch_ib(i)%z_centroid
-
-!                 ! delete if not in neighborhood
-!                 if (f_neighborhood_ranks_own_location(centroid)) then
-!                     output_idx = output_idx + 1
-!                     if (i /= output_idx) then
-!                         patch_ib(output_idx) = patch_ib(i)
-!                     end if
-
-!                     ! check if in local domain
-!                     if (f_local_rank_owns_location(centroid)) then
-!                         local_output_idx = local_output_idx + 1
-!                         local_ib_patch_ids(local_output_idx) = output_idx
-!                     end if
-!                 end if
-!             end do
-!             num_ibs = output_idx
-!             num_local_ibs = local_output_idx
-!             $:GPU_UPDATE(device='[patch_ib]')
-!             call s_update_ib_lookup()
-!         end if
-! #endif
-
-!     end subroutine s_handoff_ib_ownership
 
     subroutine s_get_neighborhood_idx(gbl_idx, neighborhood_idx)
 
@@ -1824,17 +1518,13 @@ contains
                 @:DEALLOCATE(ib_airfoil_grids(i)%lower)
             end if
         end do
-
         if (allocated(models)) then
-            if (size(models) > 0) then
-                @:DEALLOCATE(models)
-            else
-                deallocate (models)
-            end if
+            @:DEALLOCATE(models)
         end if
-
+        if (allocated(ghost_points)) then
+            @:DEALLOCATE(ghost_points)
+        end if
         if (collision_model > 0) call s_finalize_collisions_module()
-
 #ifdef MFC_MPI
         if (num_procs > 1) then
             @:DEALLOCATE(send_ids, send_ft)
