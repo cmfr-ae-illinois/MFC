@@ -25,13 +25,13 @@ module m_additional_forcing
     $:GPU_DECLARE(create='[spatial_rho, spatial_rhou, spatial_rhoe, phase_rho, phase_rhou, phase_rhoe]')
 
     ! control params
-    real(wp)                            :: rho_avg_loc, rhou_avg_loc, cs_avg_loc, Vp_avg
+    real(wp)                            :: rho_avg_loc, rhou_avg_loc, cs_avg_loc
     real(wp), allocatable, dimension(:) :: err_u_hist
     real(wp), allocatable, dimension(:) :: rho_wdw_cntrl, u_wdw_cntrl, cs_wdw_cntrl, Vp_wdw_cntrl
     real(wp)                            :: rho_sum_cntrl, u_sum_cntrl, cs_sum_cntrl, Vp_sum_cntrl
     integer                             :: wdw_fill_cntrl
 
-    $:GPU_DECLARE(create='[rho_avg_loc, rhou_avg_loc, cs_avg_loc, Vp_avg]')
+    $:GPU_DECLARE(create='[rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
 
 contains
 
@@ -269,7 +269,7 @@ contains
         real(wp) :: rho_avg, rhou_avg, u_avg, cs_avg
         real(wp) :: u_star_rel, Mach, u_rel
         real(wp) :: err_u, err_M, d_err_u
-        real(wp) :: Vp_sum_loc, Vp_sum
+        real(wp) :: Vp_avg_loc, Vp_avg
         integer  :: ib_local
         integer :: window_loc
         integer :: i, j, k, l
@@ -280,27 +280,20 @@ contains
         gamma = 1._wp/fluid_pp(1)%gamma + 1._wp
 
         ! intialize
-        Vp_sum_loc = 0._wp
+        Vp_avg_loc = 0._wp
         rho_avg_loc = 0._wp
         rhou_avg_loc = 0._wp
         cs_avg_loc = 0._wp
 
-        $:GPU_UPDATE(device='[Vp_sum_loc, rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
-
-        $:GPU_PARALLEL_LOOP(reduction='[[Vp_sum_loc]]', reductionOp='[+]', private='[i, ib_local]')
         do i = 1, num_local_ibs
             ib_local = local_ib_patch_ids(i)
-
-            Vp_sum_loc = Vp_sum_loc + patch_ib(ib_local)%vel(mom_f_idx)
+            Vp_avg_loc = Vp_avg_loc + patch_ib(ib_local)%vel(mom_f_idx)
         end do
-        $:END_GPU_PARALLEL_LOOP()
-
-        $:GPU_UPDATE(host='[Vp_sum_loc]')
 
         ! Global sum over the unique owner partition.
-        call s_mpi_allreduce_sum(Vp_sum_loc, Vp_sum)
+        call s_mpi_allreduce_sum(Vp_avg_loc, Vp_avg)
 
-        Vp_avg = Vp_sum / real(num_gbl_ibs, wp)
+        Vp_avg = Vp_avg / real(num_gbl_ibs, wp)
 
         ! get averages of density, momentum, soundspeed
         $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[rho_avg_loc, rhou_avg_loc, cs_avg_loc]]', reductionOp='[+]', private='[l, rho, dVol, pres]', copyin='[gamma]')

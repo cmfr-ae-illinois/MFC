@@ -468,19 +468,21 @@ contains
                         if (index < -buff_size .or. index > bound) then
 #if !defined(MFC_OpenACC) && !defined(MFC_OpenMP)
                             print *, "A required image point is not located in this computational domain."
-                            print *, "Ghost Point is located at :"
+                            print *, "Ghost Point is located at:"
                             if (p == 0) then
                                 print *, [x_cc(i), y_cc(j)]
                             else
                                 print *, [x_cc(i), y_cc(j), z_cc(k)]
                             end if
+                            print *, "Image point located at: "
+                            print *, ghost_points_in(q)%ip_loc
                             print *, "We are searching in dimension ", dim, " for image point at ", ghost_points_in(q)%ip_loc(:)
                             print *, "Domain size: ", [x_cc(-buff_size), y_cc(-buff_size), z_cc(-buff_size)]
                             print *, "x: ", x_cc(-buff_size), " to: ", x_cc(m + buff_size - 1)
                             print *, "y: ", y_cc(-buff_size), " to: ", y_cc(n + buff_size - 1)
                             if (p /= 0) print *, "z: ", z_cc(-buff_size), " to: ", z_cc(p + buff_size - 1)
                             print *, "Image point is located approximately ", &
-                                & (ghost_points_in(q)%loc(dim) - ghost_points_in(q) %ip_loc(dim))/(s_cc(1) - s_cc(0)), &
+                                & (s_cc(ghost_points_in(q)%loc(dim)) - ghost_points_in(q)%ip_loc(dim))/(s_cc(1) - s_cc(0)), &
                                 & " grid cells away"
                             print *, "Levelset ", dist, " and Norm: ", norm(:)
                             print *, &
