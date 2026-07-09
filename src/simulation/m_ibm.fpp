@@ -468,14 +468,12 @@ contains
                         if (index < -buff_size .or. index > bound) then
 #if !defined(MFC_OpenACC) && !defined(MFC_OpenMP)
                             print *, "A required image point is not located in this computational domain."
-                            print *, "Ghost Point is located at:"
+                            print *, "Ghost Point is located at :"
                             if (p == 0) then
                                 print *, [x_cc(i), y_cc(j)]
                             else
                                 print *, [x_cc(i), y_cc(j), z_cc(k)]
                             end if
-                            print *, "Image point located at: "
-                            print *, ghost_points_in(q)%ip_loc
                             print *, "We are searching in dimension ", dim, " for image point at ", ghost_points_in(q)%ip_loc(:)
                             print *, "Domain size: ", [x_cc(-buff_size), y_cc(-buff_size), z_cc(-buff_size)]
                             print *, "x: ", x_cc(-buff_size), " to: ", x_cc(m + buff_size - 1)
@@ -488,8 +486,8 @@ contains
                             print *, &
                                 & "A short term fix may include increasing buff_size further in m_helper_basic (currently set to a minimum of 10)"
 #endif
-                            bounds_error = .true.
                             index = ghost_points_in(q)%loc(dim)
+                            bounds_error = .true.
                         end if
                     end do
 
@@ -1361,6 +1359,10 @@ contains
             do i = 1, num_local_ibs
                 local_ib_idx_old(i) = patch_ib(local_ib_patch_ids(i))%gbl_patch_id
             end do
+
+            ! Sync GPU-updated fields (angles, angular_vel, centroids) to host before
+            ! compaction and MPI packing, which read from host memory.
+            $:GPU_UPDATE(host='[patch_ib]')
 
             ! delete any particles that no longer need to be tracked and coalesce the array
             output_idx = 0

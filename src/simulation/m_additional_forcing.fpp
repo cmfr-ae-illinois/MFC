@@ -285,6 +285,8 @@ contains
         rhou_avg_loc = 0._wp
         cs_avg_loc = 0._wp
 
+        $:GPU_UPDATE(device='[rho_avg_loc, rhou_avg_loc, cs_avg_loc]')
+
         do i = 1, num_local_ibs
             ib_local = local_ib_patch_ids(i)
             Vp_avg_loc = Vp_avg_loc + patch_ib(ib_local)%vel(mom_f_idx)
