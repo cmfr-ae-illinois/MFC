@@ -1,5 +1,4 @@
 import json
-import math
 import numpy as np
 from MFC_particle_forces import Osnes_CD
 
@@ -14,13 +13,15 @@ D = 0.1
 R = D/2.0
 
 # domain length
-L = 10.0 * D
+Lx = 10. * D
+Ly = 20. * D 
+Lz = 10. * D
 
 # particle params
 rho_s = 10.0 
 vol_s = 4.0/3.0 * np.pi * R**3
 mass_s = rho_s * vol_s
-particle_vf = (N_s * vol_s) / (L**3) 
+particle_vf = (N_s * vol_s) / (Lx * Ly * Lz) 
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
@@ -54,7 +55,7 @@ K_Pp = -2.0*P/(Cp*M_tgt)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 1.0e-6
-t_final = 6 * L / v_tgt
+t_final = 4 * Ly / v_tgt
 Nt = int(t_final / dt)
 t_step_save = Nt // 400
 
@@ -64,7 +65,7 @@ Nz = 127
 
 W = 1 #int(tau_p/dt)
 
-collision_time = 20.0 * dt
+collision_time = 2.0 * dt
 
 # immersed boundary dictionary
 ib_dict = {}
@@ -87,14 +88,14 @@ case_dict = {
     "run_time_info": "T",
     # Computational Domain Parameters
     # x direction
-    "x_domain%beg": -5.0 * D,
-    "x_domain%end": 5.0 * D,
+    "x_domain%beg": -Lx/2,
+    "x_domain%end": +Lx/2,
     # y direction
-    "y_domain%beg": -10.0 * D,
-    "y_domain%end": 10.0 * D,
+    "y_domain%beg": -Ly/2,
+    "y_domain%end": +Ly/2,
     # z direction
-    "z_domain%beg": -5.0 * D,
-    "z_domain%end": 5.0 * D,
+    "z_domain%beg": -Lz/2,
+    "z_domain%end": +Lz/2,
     "m": Nx,
     "n": Ny,
     "p": Nz,
@@ -143,6 +144,7 @@ case_dict = {
     "num_ibs": N_s,
     "viscous": "T",
     "fd_order": 4,
+    "ib_neighborhood_radius": 20,
     # Formatted Database Files Structure Parameters
     "format": 1,
     "precision": 2,
@@ -201,7 +203,7 @@ case_dict = {
     "collision_model": 1,  # soft-sphere collision model
     "ib_coefficient_of_friction": 0.1,
     "collision_time": collision_time,
-    "coefficient_of_restitution": 0.9,  # almost perfectly elastic
+    "coefficient_of_restitution": 0.8,  # almost perfectly elastic
 
     }
 

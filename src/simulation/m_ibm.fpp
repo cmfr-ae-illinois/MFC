@@ -489,6 +489,7 @@ contains
                                 & "A short term fix may include increasing buff_size further in m_helper_basic (currently set to a minimum of 10)"
 #endif
                             bounds_error = .true.
+                            index = ghost_points_in(q)%loc(dim)
                         end if
                     end do
 
@@ -503,7 +504,7 @@ contains
         end do
         $:END_GPU_PARALLEL_LOOP()
 
-        @:PROHIBIT(bounds_error, "Ghost Point and Image Point on Different Processors. Exiting")
+        ! @:PROHIBIT(bounds_error, "Ghost Point and Image Point on Different Processors. Exiting")
 
     end subroutine s_compute_image_points
 

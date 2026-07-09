@@ -575,7 +575,7 @@ contains
         end if
 
         if (particle_control) then  ! update body force and freestream pressure
-            call s_update_controllers(t_step, q_cons_ts(1)%vf, q_prim_vf)
+            call s_update_controllers(t_step-t_step_start, q_cons_ts(1)%vf, q_prim_vf)
         end if
 
         ! Adaptive dt: final stage

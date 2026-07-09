@@ -15,12 +15,12 @@ L = 10.0 * D
 rho_s = 10.0 
 vol_s = 4.0/3.0 * np.pi * R**3
 mass_s = rho_s * vol_s
-N_s = 2
+N_s = 1
 particle_vf = (N_s * vol_s) / (L**3) 
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M = 2.0
+M = 1.5
 Re = 500.0
 P = 101325
 rho = 1.225
@@ -33,7 +33,7 @@ Nt = 1000
 t_save = 10 
 
 # grid
-Nx = 63
+Nx = 127
 Ny = Nx
 Nz = Ny
 
@@ -41,24 +41,24 @@ Nz = Ny
 ib_dict = {}
 ib_dict.update({
     f"patch_ib({1})%geometry": 8,
-    f"patch_ib({1})%x_centroid": 0.0,
-    f"patch_ib({1})%y_centroid": -0.35,
-    f"patch_ib({1})%z_centroid": 0.0,
-    f"patch_ib({1})%vel(2)": -100.0,
+    f"patch_ib({1})%x_centroid": +0.45,
+    f"patch_ib({1})%y_centroid": +0.45,
+    f"patch_ib({1})%z_centroid": +0.45,
+    # f"patch_ib({1})%vel(2)": -100.0,
     f"patch_ib({1})%radius": D / 2,
     f"patch_ib({1})%slip": "F",
     f"patch_ib({1})%moving_ibm": 2,
     f"patch_ib({1})%mass": mass_s,
 
-    f"patch_ib({2})%geometry": 8,
-    f"patch_ib({2})%x_centroid": 0.0,
-    f"patch_ib({2})%y_centroid": +0.35,
-    f"patch_ib({2})%z_centroid": 0.0,
-    f"patch_ib({2})%vel(2)": +100.0,
-    f"patch_ib({2})%radius": D / 2,
-    f"patch_ib({2})%slip": "F",
-    f"patch_ib({2})%moving_ibm": 2,
-    f"patch_ib({2})%mass": mass_s,
+    # f"patch_ib({2})%geometry": 8,
+    # f"patch_ib({2})%x_centroid": 0.0,
+    # f"patch_ib({2})%y_centroid": +0.35,
+    # f"patch_ib({2})%z_centroid": 0.0,
+    # f"patch_ib({2})%vel(2)": +100.0,
+    # f"patch_ib({2})%radius": D / 2,
+    # f"patch_ib({2})%slip": "F",
+    # f"patch_ib({2})%moving_ibm": 2,
+    # f"patch_ib({2})%mass": mass_s,
     })
 
 # Configuring case dictionary
@@ -128,6 +128,7 @@ case_dict = {
     "E_wrt": "T",
     "parallel_io": "T",
     "ib_state_wrt": "T",
+    "fd_order": 4,
     # Patch: Constant Tube filled with air
     # Specify the cylindrical air tube grid geometry
     "patch_icpp(1)%geometry": 9,
@@ -139,9 +140,9 @@ case_dict = {
     "patch_icpp(1)%length_y": 10 * D,
     "patch_icpp(1)%length_z": 10 * D,
     # Specify the patch primitive variables
-    "patch_icpp(1)%vel(1)": 0.0e00,
-    "patch_icpp(1)%vel(2)": 0.e00,
-    "patch_icpp(1)%vel(3)": 0.0e00,
+    "patch_icpp(1)%vel(1)": v1/np.sqrt(3),
+    "patch_icpp(1)%vel(2)": v1/np.sqrt(3),
+    "patch_icpp(1)%vel(3)": v1/np.sqrt(3),
     "patch_icpp(1)%pres": P,
     "patch_icpp(1)%alpha_rho(1)": rho,
     "patch_icpp(1)%alpha(1)": 1.0e00,

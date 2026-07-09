@@ -1,5 +1,4 @@
 import json
-import math
 import numpy as np
 from MFC_particle_forces import Osnes_CD
 
@@ -14,13 +13,15 @@ D = 0.1
 R = D/2.0
 
 # domain length
-L = 10.0 * D
+Lx = 10. * D
+Ly = 20. * D 
+Lz = 10. * D
 
 # particle params
 rho_s = 10.0 
 vol_s = 4.0/3.0 * np.pi * R**3
 mass_s = rho_s * vol_s
-particle_vf = (N_s * vol_s) / (L**3) 
+particle_vf = (N_s * vol_s) / (Lx * Ly * Lz) 
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
@@ -42,10 +43,10 @@ g0 = drag / mass_s
 fRe = CD * Re / 24.0
 tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
 
-Cg = 1.2; Cp = 1000.0
+Cg = 1.2; Cp = 100.0
 
 K_Pg = -1.0/(Cg*tau_p)
-K_Dg = -0.5 
+K_Dg = -0.2 
 K_Pp = -2.0*P/(Cp*M_tgt)
 
 #print('mu: ', mu)
@@ -54,15 +55,15 @@ K_Pp = -2.0*P/(Cp*M_tgt)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 1.0e-6
-t_final = 8 * L / v_tgt
+t_final = 6 * Ly / v_tgt
 Nt_final = int(t_final / dt)
-Nt1 = 594
+Nt1 = 2125
 Nt2 = Nt_final
-t_step_save = 1 
+t_step_save = 5 
 
 Nx = 127
-Ny = Nx
-Nz = Ny
+Ny = 255
+Nz = 127
 
 W = 1 #int(tau_p/dt)
 
@@ -113,24 +114,29 @@ case_dict = {
     "model_eqns": 2,
     # 6 equations model does not need the K \div(u) term
     "alt_soundspeed": "F",
-    # One fluids: air
+    # One fluid
     "num_fluids": 1,
-    # time step
-    "mpp_lim": "F",
     # Correct errors when computing speed of sound
     "mixture_err": "T",
     # Use TVD RK3 for time marching
     "time_stepper": 3,
     # Reconstruct the primitive variables to minimize spurious
+
+    # Use MUSCL
+    "recon_type": 2,
+    "muscl_order": 2,
+    "muscl_lim": 1,
+
     # Use WENO5
-    "weno_order": 5,
-    "weno_eps": 1.0e-16,
-    "weno_Re_flux": "T",
-    "weno_avg": "T",
-    "avg_state": 1,
-    "mp_weno": "T",
+    # "weno_order": 5,
+    # "weno_eps": 1.0e-16,
+    # "weno_Re_flux": "T",
+    # "weno_avg": "T",
+    # "mp_weno": "T",
+
     "riemann_solver": 2,
     "wave_speeds": 1,
+    "avg_state": 1,
     # periodic bc
     "bc_x%beg": -1,
     "bc_x%end": -1,
@@ -142,6 +148,7 @@ case_dict = {
     "ib": "T",
     "num_ibs": N_s,
     "viscous": "T",
+    "fd_order": 4,
     # Formatted Database Files Structure Parameters
     "format": 1,
     "precision": 2,
@@ -149,6 +156,7 @@ case_dict = {
     "cons_vars_wrt": "T", 
     "E_wrt": "T",
     "parallel_io": "T",
+    "ib_state_wrt": "T",
     # Fluids Physical Parameters
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
@@ -161,21 +169,28 @@ case_dict = {
     "P_inf_ref": P,
     "mom_f_idx": 2,
     "forcing_window": 1,
-    "forcing_dt": 1.0/(0.5*dt),
+    "forcing_dt": 1.0/(2.0*dt),
     "fluid_volume_fraction": fluid_vf,
     "forcing_wrt": "T",
     "forcing_start": 0,
 
     # controls
-    # "particle_control": "T",
-    # "particle_bf": -g0,
+    "particle_control": "T",
+    "particle_control_start": 5, #Nt//10,
+    "particle_bf": -g0,
 
-    # "cntrl_p%Re_tgt": Re,
-    # "cntrl_p%M_tgt": M,
-    # "cntrl_p%K_Pg": K_Pg,
-    # "cntrl_p%K_Dg": K_Dg,
-    # "cntrl_p%K_Pp": K_Pp,
-    # "cntrl_p%window_size": W,
+    "cntrl_p%Re_tgt": Re,
+    "cntrl_p%M_tgt": M_tgt,
+    "cntrl_p%K_Pg": K_Pg,
+    "cntrl_p%K_Dg": K_Dg,
+    "cntrl_p%K_Pp": K_Pp,
+    "cntrl_p%window_size": W,
+
+    # collisions
+    "collision_model": 1,  # soft-sphere collision model
+    "ib_coefficient_of_friction": 0.1,
+    "collision_time": collision_time,
+    "coefficient_of_restitution": 0.8,  # almost perfectly elastic
 
     }
 
