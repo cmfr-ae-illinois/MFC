@@ -635,7 +635,7 @@ contains
         forcing_wrt = .false.
         u_inf_ref = dflt_real
         rho_inf_ref = dflt_real
-        P_inf_ref = dflt_real
+        P_inf_ref = 1._wp
 
         particle_control = .false.
         particle_control_start = 0

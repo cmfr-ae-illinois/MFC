@@ -54,7 +54,7 @@ K_Pp = -2.0*P/(Cp*M_tgt)
 #print('rho: ', rho)
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 0.5e-6
+dt = 1.0e-6
 t_final = 4 * Ly / v_tgt
 Nt = int(t_final / dt)
 t_step_save = Nt // 300
@@ -75,10 +75,9 @@ for i in range(N_s):
       f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
       f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
       f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
-      f"patch_ib({i+1})%vel(2)": 0.0,
       f"patch_ib({i+1})%radius": D / 2,
       f"patch_ib({i+1})%slip": "F",
-      f"patch_ib({i+1})%moving_ibm": 0, 
+      f"patch_ib({i+1})%moving_ibm": 2, 
       f"patch_ib({i+1})%mass": mass_s,
       })
 

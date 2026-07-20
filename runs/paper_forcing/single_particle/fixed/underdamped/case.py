@@ -23,21 +23,19 @@ particle_vf = (N_s * vol_s) / (Lx * Ly * Lz)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M_start = 1.4
 M_tgt = 1.4
-Re = 1.5e+05
+Re_tgt = 500.0
 
-P = 12000.0
-rho = 0.225
+P_tgt = 101325.0
+rho_tgt = 1.225
 
-v_start = M_start * np.sqrt(gam_a * P / rho) 
-v_tgt   = M_tgt   * np.sqrt(gam_a * P / rho) 
-mu = rho * v_tgt * D / Re
+v_tgt = M_tgt * np.sqrt(gam_a * P_tgt / rho_tgt) 
+mu = rho_tgt * v_tgt * D / Re_tgt
 
-factor = 1.5
-rho_start = factor * rho
-v_start = factor * v_tgt
-P_start = factor * P
+factor = 0.75
+rho_start = factor * rho_tgt
+v_start = v_tgt
+P_start = factor * P_tgt
 
 # print('mu: ', mu)
 # print('v_tgt: ', v_tgt)
@@ -53,7 +51,8 @@ Nx = 127
 Ny = Nx
 Nz = Ny
 
-alpha_forcing = 0.4
+alpha_forcing = 0.45
+forcing_start = -1
 
 # immersed boundary dictionary
 ib_dict = {}
@@ -141,12 +140,11 @@ case_dict = {
     # fluid patch parameters
     "patch_icpp(1)%geometry": 9,
     "patch_icpp(1)%x_centroid": 0.0,
-    # Uniform medium density, centroid is at the center of the domain
     "patch_icpp(1)%y_centroid": 0.0,
     "patch_icpp(1)%z_centroid": 0.0,
-    "patch_icpp(1)%length_x": 10. * D,
-    "patch_icpp(1)%length_y": 10. * D,
-    "patch_icpp(1)%length_z": 10. * D,
+    "patch_icpp(1)%length_x": Lx,
+    "patch_icpp(1)%length_y": Ly,
+    "patch_icpp(1)%length_z": Lz,
     # Specify the patch primitive variables
     "patch_icpp(1)%vel(1)": 0.0e00,
     "patch_icpp(1)%vel(2)": v_start,
@@ -163,14 +161,14 @@ case_dict = {
     # periodic forcing
     "periodic_forcing": "T",
     "u_inf_ref": v_tgt,
-    "rho_inf_ref": rho,
-    "P_inf_ref": P,
+    "rho_inf_ref": rho_tgt,
+    "P_inf_ref": P_tgt,
     "mom_f_idx": 2,
     "forcing_window": 1,
     "forcing_dt": 1.0/(alpha_forcing*dt),
     "fluid_volume_fraction": fluid_vf,
     "forcing_wrt": "T",
-    "forcing_start": Nt//10,
+    "forcing_start": forcing_start,#Nt//10,
 
     }
 

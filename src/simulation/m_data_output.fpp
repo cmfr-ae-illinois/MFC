@@ -287,7 +287,7 @@ contains
                 end if
             end if
 
-            print *, icfl_max_glb, vcfl_max_glb
+            ! print *, icfl_max_glb, vcfl_max_glb
             
         end if
 
