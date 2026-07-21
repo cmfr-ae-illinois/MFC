@@ -126,7 +126,7 @@ contains
         $:GPU_UPDATE(device='[spatial_rho, spatial_rhou, spatial_rhoeps, spatial_rhoE]')
 
         ! compute spatial averages
-        $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoeps]]', reductionOp='[+]', private='[l, &
+        $:GPU_PARALLEL_LOOP(collapse=3, reduction='[[spatial_rho, spatial_rhou, spatial_rhoeps, spatial_rhoE]]', reductionOp='[+]', private='[l, &
                             & rho, dVol]')
         do i = 0, m
             do j = 0, n
@@ -138,7 +138,7 @@ contains
                         end do
                         dVol = dx(i)*dy(j)*dz(k)
                         spatial_rho = spatial_rho + (rho*dVol)  ! rho
-                        spatial_rhou = spatial_rhou + (q_cons_vf(eqn_idx%cont%end + mom_f_idx)%sf(i, j, k)*dVol)  ! rho*u
+                        spatial_rhou = spatial_rhou + (q_cons_vf(eqn_idx%mom%beg + mom_f_idx - 1)%sf(i, j, k)*dVol)  ! rho*u
                         spatial_rhoeps = spatial_rhoeps + ((q_cons_vf(eqn_idx%E)%sf(i, j, k) & 
                             & - 0.5_wp*rho*(q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k)**2 & 
                             & + q_prim_vf(eqn_idx%mom%beg + 1)%sf(i, j, k)**2 & 
@@ -238,7 +238,7 @@ contains
         end if
 
         if (forcing_wrt .and. proc_rank == 0) then
-            print *, 'FORCING:', spatial_rho_glb, spatial_rhou_glb, spatial_rhoeps_glb, spatial_rhoE_glb
+            ! print *, 'FORCING:', spatial_rho_glb, spatial_rhou_glb, spatial_rhoeps_glb, spatial_rhoE_glb
             write (102) spatial_rho_glb, spatial_rhou_glb, spatial_rhoeps_glb, spatial_rhoE_glb
             flush (102)
         end if
