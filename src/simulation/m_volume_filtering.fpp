@@ -31,7 +31,7 @@ module m_volume_filtering
     private; public :: s_initialize_fftw_explicit_filter_module, &
  s_initialize_filtering_kernel, s_initialize_fluid_indicator_function, &
  s_initialize_filtered_fluid_indicator_function, s_initialize_fluid_indicator_gradient, &
- s_finalize_fftw_explicit_filter_module, s_volume_filter_momentum_eqn, s_compute_particle_forces
+ s_finalize_fftw_explicit_filter_module, s_volume_filter_momentum_eqn
 
 #if !defined(MFC_OpenACC)
     include 'fftw3.f03'
@@ -61,12 +61,9 @@ module m_volume_filtering
     type(scalar_field), allocatable, dimension(:), public :: eff_visc
     type(scalar_field), allocatable, dimension(:), public :: int_mom_exch
 
-    ! x-,y-,z-direction forces on particles
-    real(wp), allocatable, dimension(:, :) :: particle_forces
-
     $:GPU_DECLARE(create='[fluid_indicator_function, filtered_fluid_indicator_function, grad_fluid_indicator]')
     $:GPU_DECLARE(create='[q_cons_filtered, filtered_pressure, visc_stress, pres_visc_stress, div_pres_visc_stress]')
-    $:GPU_DECLARE(create='[reynolds_stress, eff_visc, int_mom_exch, particle_forces]')
+    $:GPU_DECLARE(create='[reynolds_stress, eff_visc, int_mom_exch]')
 
 #if defined(MFC_OpenACC)
     ! GPU plans
@@ -195,7 +192,19 @@ contains
             @:ACC_SETUP_SFs(int_mom_exch(i))
         end do
 
-        @:ALLOCATE(particle_forces(0:num_ibs, 3))
+        @:ALLOCATE(fluid_indicator_function%sf(idwbuff(1)%beg:idwbuff(1)%end, &
+                                               idwbuff(2)%beg:idwbuff(2)%end, &
+                                               idwbuff(3)%beg:idwbuff(3)%end))
+        @:ACC_SETUP_SFs(fluid_indicator_function)
+
+        @:ALLOCATE(filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p))
+        @:ACC_SETUP_SFs(filtered_fluid_indicator_function)
+
+        @:ALLOCATE(grad_fluid_indicator(1:3))
+        do i = 1, num_dims
+            @:ALLOCATE(grad_fluid_indicator(i)%sf(0:m, 0:n, 0:p))
+            @:ACC_SETUP_SFs(grad_fluid_indicator(i))
+        end do
 
         !< global sizes
         Nx = m_glb + 1
@@ -326,14 +335,6 @@ contains
                                                 cmplx_kernelG1d, onembed, 1, Nz, &
                                                 FFTW_FORWARD, FFTW_MEASURE)
 #endif
-
-        ! file for particle forces
-        if (compute_particle_drag) then
-            if (proc_rank == 0) then
-                open (unit=100, file='particle_force.bin', status='replace', form='unformatted', access='stream', action='write')
-            end if
-        end if
-
     end subroutine s_initialize_fftw_explicit_filter_module
 
     !< initialize the gaussian filtering kernel in real space and then compute its DFT
@@ -346,7 +347,7 @@ contains
         integer :: i, j, k
 
         ! gaussian filter
-        sigma_stddev = filter_width
+        sigma_stddev = volume_filter_width
 
         Lx = x_domain%end - x_domain%beg
         Ly = y_domain%end - y_domain%beg
@@ -469,14 +470,8 @@ contains
     end subroutine s_initialize_filtering_kernel
 
     !< initialize fluid indicator function and filtered fluid indicator function
-    subroutine s_initialize_fluid_indicator_function(bc_type)
-        type(integer_field), dimension(1:num_dims, 1:2), intent(in) :: bc_type
+    subroutine s_initialize_fluid_indicator_function()
         integer :: i, j, k
-
-        @:ALLOCATE(fluid_indicator_function%sf(idwbuff(1)%beg:idwbuff(1)%end, &
-            idwbuff(2)%beg:idwbuff(2)%end, &
-            idwbuff(3)%beg:idwbuff(3)%end))
-        @:ACC_SETUP_SFs(fluid_indicator_function)
 
         ! define fluid indicator function
         if (ib) then
@@ -505,15 +500,12 @@ contains
             $:END_GPU_PARALLEL_LOOP()
         end if
 
-        call s_populate_scalarfield_buffers(bc_type, fluid_indicator_function)
+        ! call s_populate_scalarfield_buffers(bc_type, fluid_indicator_function)
 
     end subroutine s_initialize_fluid_indicator_function
 
     subroutine s_initialize_filtered_fluid_indicator_function
         integer :: i, j, k
-
-        @:ALLOCATE(filtered_fluid_indicator_function%sf(0:m, 0:n, 0:p))
-        @:ACC_SETUP_SFs(filtered_fluid_indicator_function)
 
         ! filter fluid indicator function
         $:GPU_PARALLEL_LOOP(collapse=3)
@@ -566,10 +558,7 @@ contains
         fd_coeffs(3) = 4._wp/105._wp
         fd_coeffs(4) = -1._wp/280._wp
 
-        @:ALLOCATE(grad_fluid_indicator(1:3))
-        do i = 1, num_dims
-            @:ALLOCATE(grad_fluid_indicator(i)%sf(0:m, 0:n, 0:p))
-            @:ACC_SETUP_SFs(grad_fluid_indicator(i))
+        do i = 1, 3
             grad_fluid_indicator(i)%sf = 0._wp
             $:GPU_UPDATE(device='[grad_fluid_indicator(i)%sf]')
         end do
@@ -733,9 +722,9 @@ contains
         $:END_GPU_PARALLEL_LOOP()
 
         ! set density and momentum buffers
-        do i = eqn_idx%cont%beg, eqn_idx%mom%end
-            call s_populate_scalarfield_buffers(bc_type, q_prim_vf(i))
-        end do
+        ! do i = eqn_idx%cont%beg, eqn_idx%mom%end
+        !     call s_populate_scalarfield_buffers(bc_type, q_prim_vf(i))
+        ! end do
 
         ! effective viscosity setup, return viscous stress tensor
         call s_generate_viscous_stress_tensor(visc_stress, q_prim_vf, dyn_visc)
@@ -743,9 +732,9 @@ contains
         call s_compute_stress_tensor(pres_visc_stress, visc_stress, q_prim_vf)
 
         ! set stress tensor buffers for taking divergence
-        do i = 1, 6
-            call s_populate_scalarfield_buffers(bc_type, pres_visc_stress(i))
-        end do
+        ! do i = 1, 6
+        !     call s_populate_scalarfield_buffers(bc_type, pres_visc_stress(i))
+        ! end do
 
         ! interphase momentum exchange term setup
         call s_compute_divergence_stress_tensor(div_pres_visc_stress, pres_visc_stress)
@@ -784,9 +773,9 @@ contains
         integer :: i, j, k, l, q
 
         ! set buffers for filtered momentum quantities and density
-        do i = eqn_idx%mom%beg, eqn_idx%mom%end
-            call s_populate_scalarfield_buffers(bc_type, q_prim_filtered(i))
-        end do
+        ! do i = eqn_idx%mom%beg, eqn_idx%mom%end
+        !     call s_populate_scalarfield_buffers(bc_type, q_prim_filtered(i))
+        ! end do
 
         ! calculate stress tensor with filtered quantities
         call s_generate_viscous_stress_tensor(visc_stress, q_prim_filtered, dyn_visc)
@@ -807,49 +796,6 @@ contains
 
     end subroutine s_compute_effective_viscosity
 
-    ! computes x-,y-,z-direction forces on particles
-    subroutine s_compute_particle_forces
-        real(wp), dimension(num_ibs, 3) :: force_glb
-        real(wp) :: dvol
-        integer :: i, j, k, l
-
-        ! zero particle forces
-        particle_forces = 0.0_wp
-        $:GPU_UPDATE(device='[particle_forces]')
-
-        $:GPU_PARALLEL_LOOP(collapse=3, private='[dvol]')
-        do i = 0, m
-            do j = 0, n
-                do k = 0, p
-                    dvol = dx(i)*dy(j)*dz(k)
-                    $:GPU_ATOMIC(atomic='update')
-                    particle_forces(ib_markers%sf(i, j, k), 1) = particle_forces(ib_markers%sf(i, j, k), 1) - (div_pres_visc_stress(1)%sf(i, j, k)*dvol)
-                    $:GPU_ATOMIC(atomic='update')
-                    particle_forces(ib_markers%sf(i, j, k), 2) = particle_forces(ib_markers%sf(i, j, k), 2) - (div_pres_visc_stress(2)%sf(i, j, k)*dvol)
-                    $:GPU_ATOMIC(atomic='update')
-                    particle_forces(ib_markers%sf(i, j, k), 3) = particle_forces(ib_markers%sf(i, j, k), 3) - (div_pres_visc_stress(3)%sf(i, j, k)*dvol)
-                end do
-            end do
-        end do
-        $:END_GPU_PARALLEL_LOOP()
-
-        $:GPU_UPDATE(host='[particle_forces]')
-
-        ! reduce particle forces across processors
-        do i = 1, num_ibs
-            call s_mpi_allreduce_sum(particle_forces(i, 1), force_glb(i, 1))
-            call s_mpi_allreduce_sum(particle_forces(i, 2), force_glb(i, 2))
-            call s_mpi_allreduce_sum(particle_forces(i, 3), force_glb(i, 3))
-        end do
-
-        ! write particle forces to file
-        if (proc_rank == 0) then
-            write (100) force_glb
-            flush (100)
-            !print *, force_glb(1, 1) / (0.5_wp * rho_inf_ref * u_inf_ref**2 * pi * patch_ib(1)%radius**2)
-        end if
-
-    end subroutine s_compute_particle_forces
 
     !< transpose domain from z-slabs to y-slabs on each processor
     subroutine s_mpi_transpose_slabZ2Y
@@ -1949,8 +1895,6 @@ contains
         end do
         @:DEALLOCATE(int_mom_exch)
 
-        @:DEALLOCATE(particle_forces)
-
         @:DEALLOCATE(data_real_in1d, data_cmplx_out1d, data_cmplx_out1dy)
         @:DEALLOCATE(cmplx_kernelG1d, real_kernelG_in)
         @:DEALLOCATE(data_real_3D_slabz, data_cmplx_slabz, data_cmplx_slaby)
@@ -1975,13 +1919,6 @@ contains
         call fftw_destroy_plan(plan_y_c2c_kernelG)
         call fftw_destroy_plan(plan_z_c2c_kernelG)
 #endif
-
-        if (compute_particle_drag) then
-            if (proc_rank == 0) then
-                close (100)
-            end if
-        end if
-
     end subroutine s_finalize_fftw_explicit_filter_module
 
 end module m_volume_filtering

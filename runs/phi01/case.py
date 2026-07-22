@@ -1,5 +1,4 @@
 import json
-import math
 import numpy as np
 
 
@@ -23,11 +22,11 @@ mu = rho * v1 * D / Re
 #print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
 
 dt = 1.0E-06
-Nt = 20 #int(1 * L / v1 / dt)
-t_save = Nt//10
-t_step_start_stats = Nt//2
+Nt = 5 #int(1 * L / v1 / dt)
+t_save = 2
+t_step_start_stats = 0
 
-Nx = 199
+Nx = 99
 Ny = Nx
 Nz = Ny
 
@@ -46,16 +45,6 @@ for i in range(N_sphere):
         f"patch_ib({i+1})%radius": D / 2,
         f"patch_ib({i+1})%slip": "F",
         })
-
-# N_sphere = 1
-# ib_dict.update({
-#     f"patch_ib({1})%geometry": 8,
-#     f"patch_ib({1})%x_centroid": 0.0,#sphere_loc[20, 0],
-#     f"patch_ib({1})%y_centroid": 0.0,#sphere_loc[20, 1],
-#     f"patch_ib({1})%z_centroid": 0.0,#sphere_loc[20, 2],
-#     f"patch_ib({1})%radius": D / 2,
-#     f"patch_ib({1})%slip": "F",
-#     })
 
 # Configuring case dictionary
 case_dict = {
@@ -117,6 +106,7 @@ case_dict = {
     # Set IB to True and add 1 patch
     "ib": "T",
     "num_ibs": N_sphere,
+    "fd_order": 4,
     "viscous": "T",
     # Formatted Database Files Structure Parameters
     "format": 1,
@@ -155,13 +145,11 @@ case_dict = {
     "P_inf_ref": P,
     "mom_f_idx": 1,
     "forcing_window": 1,
-    "forcing_dt": 1.0/(0.5*dt),
+    "forcing_dt": 1.0/(2.0*dt),
     "fluid_volume_fraction": 0.9,
 
     "volume_filter_momentum_eqn": "T",
-    "filter_width": 3.0*D/2 * np.sqrt(2/(9*np.pi)),
-    "compute_particle_drag": "T",
-
+    "volume_filter_width": 3.0*D/2 * np.sqrt(2/(9*np.pi)),
     "slab_domain_decomposition": "T", 
     }
 
