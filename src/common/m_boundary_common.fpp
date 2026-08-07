@@ -68,7 +68,7 @@ contains
     !> Populate the buffers of the primitive variables based on the selected boundary conditions.
     impure subroutine s_populate_variables_buffers(bc_type, q_prim_vf, pb_in, mv_in, q_T_sf)
 
-        type(scalar_field), dimension(sys_size), intent(inout)                                               :: q_prim_vf
+        type(scalar_field), dimension(1:), intent(inout)                                               :: q_prim_vf
         real(stp), optional, dimension(idwbuff(1)%beg:,idwbuff(2)%beg:,idwbuff(3)%beg:,1:,1:), intent(inout) :: pb_in, mv_in
         type(integer_field), dimension(1:num_dims,1:2), intent(in)                                           :: bc_type
         type(scalar_field), optional, intent(inout)                                                          :: q_T_sf
@@ -103,7 +103,7 @@ contains
         integer, intent(in) :: bc_dir, bc_loc
         type(int_bounds_info), intent(in) :: bc_bounds
         type(integer_field), intent(in) :: bc_type_edge
-        type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
+        type(scalar_field), dimension(1:), intent(inout) :: q_prim_vf
         real(stp), optional, dimension(idwbuff(1)%beg:,idwbuff(2)%beg:,idwbuff(3)%beg:,1:,1:), intent(inout) :: pb_in, mv_in
         type(scalar_field), optional, intent(inout) :: q_T_sf
         integer :: bc_edge, k_beg, k_end, l_beg, l_end

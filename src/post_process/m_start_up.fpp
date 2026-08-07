@@ -270,7 +270,8 @@ contains
             end if
         end do
 
-        if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+        ! if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+        if (q_filtered_wrt) then
             write (varname, '(A)') 'filtered_fluid_indicator_function'
             call s_write_field(varname, t_step, filtered_fluid_indicator_function, x_beg, x_end, y_beg, y_end, z_beg, z_end)
             do i = 1, 6

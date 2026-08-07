@@ -712,7 +712,8 @@ contains
 
         if (present(beta)) then
             alt_sys = sys_size + 1
-        else if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+        ! else if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+        else if (q_filtered_wrt) then
             alt_sys = sys_size + volume_filter_dt%stat_size
         else
             alt_sys = sys_size
@@ -814,7 +815,8 @@ contains
             else
                 call s_initialize_mpi_data(q_cons_vf)
             end if
-            if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+            ! if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+            if (q_filtered_wrt) then
                 call s_initialize_mpi_data_filtered(filtered_fluid_indicator_function, &
                                                     stat_q_cons_filtered, stat_filtered_pressure, &
                                                     stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)
@@ -857,7 +859,8 @@ contains
                         call MPI_FILE_WRITE_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size*mpi_io_type, mpi_io_p, status, ierr)
                     end do
                 end if
-            else if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+            ! else if (q_filtered_wrt .and. (t_step == 0 .or. t_step == t_step_stop)) then
+            else if (q_filtered_wrt) then
                 do i = 1, alt_sys
                     var_MOK = int(i, MPI_OFFSET_KIND)
 

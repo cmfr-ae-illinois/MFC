@@ -451,7 +451,8 @@ contains
         integer                                      :: i
         integer                                      :: alt_sys
 
-        if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+        ! if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+        if (q_filtered_wrt) then
             alt_sys = sys_size + volume_filter_dt%stat_size
         else
             alt_sys = sys_size
@@ -525,7 +526,8 @@ contains
 
                 call s_setup_mpi_io_params(data_size, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
 
-                if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+                ! if (q_filtered_wrt .and. (t_step == t_step_stop)) then
+                if (q_filtered_wrt) then
                     call s_initialize_mpi_data_filtered(filtered_fluid_indicator_function, &
                                                         stat_q_cons_filtered, stat_filtered_pressure, &
                                                         stat_reynolds_stress, stat_eff_visc, stat_int_mom_exch)

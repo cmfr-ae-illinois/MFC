@@ -170,19 +170,19 @@ contains
         call s_update_statistics(ns, filtered_pressure, Msn_filtered_pressure)
 
         ! compute 1st, 2nd, 3rd, 4th order statistical moments
-        if (t_step == t_step_stop - 1) then ! only compute at final time
-            do i = 1, 6
-                call s_compute_statistical_moments(ns, Msn_reynolds_stress(i)%vf, stat_reynolds_stress(i)%vf)
-                call s_compute_statistical_moments(ns, Msn_eff_visc(i)%vf, stat_eff_visc(i)%vf)
-            end do
-            do i = 1, num_dims
-                call s_compute_statistical_moments(ns, Msn_int_mom_exch(i)%vf, stat_int_mom_exch(i)%vf)
-            end do
-            do i = 1, eqn_idx%E
-                call s_compute_statistical_moments(ns, Msn_q_cons_filtered(i)%vf, stat_q_cons_filtered(i)%vf)
-            end do
-            call s_compute_statistical_moments(ns, Msn_filtered_pressure, stat_filtered_pressure)
-        end if
+        ! if (t_step == t_step_stop - 1) then ! only compute at final time
+        do i = 1, 6
+            call s_compute_statistical_moments(ns, Msn_reynolds_stress(i)%vf, stat_reynolds_stress(i)%vf)
+            call s_compute_statistical_moments(ns, Msn_eff_visc(i)%vf, stat_eff_visc(i)%vf)
+        end do
+        do i = 1, num_dims
+            call s_compute_statistical_moments(ns, Msn_int_mom_exch(i)%vf, stat_int_mom_exch(i)%vf)
+        end do
+        do i = 1, eqn_idx%E
+            call s_compute_statistical_moments(ns, Msn_q_cons_filtered(i)%vf, stat_q_cons_filtered(i)%vf)
+        end do
+        call s_compute_statistical_moments(ns, Msn_filtered_pressure, stat_filtered_pressure)
+        ! end if
 
     end subroutine s_compute_statistics_momentum_unclosed_terms
 
