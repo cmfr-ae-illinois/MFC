@@ -35,7 +35,7 @@ mu = rho_tgt * v_tgt * D / Re_tgt
 factor = 0.2
 rho_start = factor * rho_tgt
 v_start = v_tgt
-P_start = factor * P_tgt
+P_start = (1.0 + factor) * P_tgt
 
 # print('mu: ', mu)
 # print('v_tgt: ', v_tgt)
@@ -51,7 +51,7 @@ Nx = 127
 Ny = Nx
 Nz = Ny
 
-alpha_forcing = 2.0
+alpha_forcing = 10.0
 forcing_start = -1
 
 # immersed boundary dictionary
@@ -152,11 +152,15 @@ case_dict = {
     "patch_icpp(1)%pres": P_start,
     "patch_icpp(1)%alpha_rho(1)": rho_start,
     "patch_icpp(1)%alpha(1)": 1.0e00,
-    # Patch: Sphere Immersed Boundary
     # Fluids Physical Parameters
     "fluid_pp(1)%gamma": 1.0e00 / (gam_a - 1.0e00),  # 2.50(Not 1.40)
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
+
+    # ic perturb
+    "perturb_flow": "T",
+    "perturb_flow_mag": 0.25,
+    "perturb_flow_fluid": 1,
 
     # periodic forcing
     "periodic_forcing": "T",

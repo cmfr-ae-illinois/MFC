@@ -58,12 +58,38 @@ contains
 
     end subroutine s_perturb_sphere
 
+    ! !> Add random noise to the velocity and void fraction of the surrounding flow field.
+    ! impure subroutine s_perturb_surrounding_flow(q_prim_vf)
+
+    !     type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
+    !     integer                                                :: i, j, k
+    !     real(wp)                                               :: rand_real, v_beg
+
+    !     call random_seed()
+
+    !     do k = 0, p
+    !         do j = 0, n
+    !             do i = 0, m
+    !                 call random_number(rand_real)
+    !                 rand_real = rand_real*perturb_flow_mag
+    !                 v_beg = q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k)
+    !                 q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k) = (1._wp + rand_real)*v_beg
+    !                 if (num_vels > 1) q_prim_vf(eqn_idx%mom%end)%sf(i, j, k) = rand_real*v_beg
+    !                 if (bubbles_euler) then
+    !                     q_prim_vf(eqn_idx%alf)%sf(i, j, k) = (1._wp + rand_real)*q_prim_vf(eqn_idx%alf)%sf(i, j, k)
+    !                 end if
+    !             end do
+    !         end do
+    !     end do
+
+    ! end subroutine s_perturb_surrounding_flow
+
     !> Add random noise to the velocity and void fraction of the surrounding flow field.
     impure subroutine s_perturb_surrounding_flow(q_prim_vf)
 
         type(scalar_field), dimension(sys_size), intent(inout) :: q_prim_vf
-        integer                                                :: i, j, k
-        real(wp)                                               :: rand_real, v_beg
+        integer                                                :: i, j, k, l
+        real(wp)                                               :: rand_real
 
         call random_seed()
 
@@ -71,13 +97,16 @@ contains
             do j = 0, n
                 do i = 0, m
                     call random_number(rand_real)
-                    rand_real = rand_real*perturb_flow_mag
-                    v_beg = q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k)
-                    q_prim_vf(eqn_idx%mom%beg)%sf(i, j, k) = (1._wp + rand_real)*v_beg
-                    if (num_vels > 1) q_prim_vf(eqn_idx%mom%end)%sf(i, j, k) = rand_real*v_beg
-                    if (bubbles_euler) then
-                        q_prim_vf(eqn_idx%alf)%sf(i, j, k) = (1._wp + rand_real)*q_prim_vf(eqn_idx%alf)%sf(i, j, k)
-                    end if
+                    rand_real = 2._wp * (rand_real - 0.5_wp) 
+                    q_prim_vf(eqn_idx%cont%beg - 1 + perturb_flow_fluid)%sf(i, j, k) = (1._wp + rand_real * perturb_flow_mag) * q_prim_vf(eqn_idx%cont%beg - 1 + perturb_flow_fluid)%sf(i, j, k) 
+                    do l = 1, num_dims
+                        call random_number(rand_real)
+                        rand_real = 2._wp * (rand_real - 0.5_wp) 
+                        q_prim_vf(eqn_idx%mom%beg - 1 + l)%sf(i, j, k) = (1._wp + rand_real * perturb_flow_mag) * (q_prim_vf(eqn_idx%mom%beg - 1 + l)%sf(i, j, k) + 1._wp)
+                    end do
+                    call random_number(rand_real)
+                    rand_real = 2._wp * (rand_real - 0.5_wp) 
+                    q_prim_vf(eqn_idx%E)%sf(i, j, k) = (1._wp + rand_real * perturb_flow_mag) * q_prim_vf(eqn_idx%E)%sf(i, j, k)
                 end do
             end do
         end do
