@@ -64,7 +64,7 @@ tuo-gpu HSA_XNACK=0
 d     NCSA Delta
 d-all python
 d-cpu gcc/11.4.0 openmpi
-d-gpu PrgEnv-nvidia/8.6.0
+d-gpu PrgEnv-nvidia/8.7.0
 d-gpu CC=nvc CXX=nvc++ FC=nvfortran
 d-gpu MFC_CUDA_CC=80,86
 

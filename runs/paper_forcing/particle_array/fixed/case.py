@@ -1,8 +1,10 @@
 import json
 import numpy as np
+from MFC_particle_forces import Osnes_CD
 
 # load initial sphere locations
-N_s = 1
+sphere_loc = np.loadtxt('sphere_array_locations.txt')
+N_s = len(sphere_loc)
 
 gam_a = 1.4
 
@@ -23,47 +25,63 @@ particle_vf = (N_s * vol_s) / (Lx * Ly * Lz)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M_tgt = 1.4
-Re_tgt = 500.0
+M_start = 1.2
+M_tgt = 1.2
+Re = 1500.0
 
-P_tgt = 101325.0
-rho_tgt = 1.225
+P = 101325
+rho = 1.225
 
-v_tgt = M_tgt * np.sqrt(gam_a * P_tgt / rho_tgt) 
-mu = rho_tgt * v_tgt * D / Re_tgt
+v_start = M_start * np.sqrt(gam_a * P / rho) 
+v_tgt   = M_tgt   * np.sqrt(gam_a * P / rho) 
+mu = rho * v_tgt * D / Re
 
-factor = 0.75
-rho_start = factor * rho_tgt
-v_start = v_tgt
-P_start = factor * P_tgt
+# control params
+CD = Osnes_CD(particle_vf, Re, M_tgt, gam_a)
+drag = 0.5 * rho * v_tgt**2 * np.pi * R**2 * CD
+g0 = drag / mass_s
+fRe = CD * Re / 24.0
+tau_p = 2.0/9.0 * rho_s * R**2 / (mu * fRe)
 
-# print('mu: ', mu)
-# print('v_tgt: ', v_tgt)
-# print('rho: ', rho)
-# print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M_tgt/Re) )) # Kn < 0.01 = continuum flow
+Cg = 1.2; Cp = 100.0
 
-dt = 1.0e-6
+K_Pg = -1.0/(Cg*tau_p)
+K_Dg = -0.2 
+K_Pp = -2.0*P/(Cp*M_tgt)
+
+#print('mu: ', mu)
+#print('v1: ', v1)
+#print('rho: ', rho)
+#print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M/Re) )) # Kn < 0.01 = continuum flow
+
+dt = 0.5e-6
 t_final = 4 * Ly / v_tgt
 Nt = int(t_final / dt)
 t_step_save = Nt // 200
 
-Nx = 127
-Ny = Nx
-Nz = Ny
+Nx = 399
+Ny = 399
+Nz = 399
 
-alpha_forcing = 0.45
+alpha_forcing = 5.0
 forcing_start = -1
+
+W = 1 #int(tau_p/dt)
+
+collision_time = 2.0 * dt
 
 # immersed boundary dictionary
 ib_dict = {}
 for i in range(N_s):
   ib_dict.update({
       f"patch_ib({i+1})%geometry": 8,
-      f"patch_ib({i+1})%x_centroid": 0.0,
-      f"patch_ib({i+1})%y_centroid": 0.0,
-      f"patch_ib({i+1})%z_centroid": 0.0,
+      f"patch_ib({i+1})%x_centroid": sphere_loc[i, 0],
+      f"patch_ib({i+1})%y_centroid": sphere_loc[i, 1],
+      f"patch_ib({i+1})%z_centroid": sphere_loc[i, 2],
       f"patch_ib({i+1})%radius": D / 2,
       f"patch_ib({i+1})%slip": "F",
+      f"patch_ib({i+1})%moving_ibm": 0, 
+      f"patch_ib({i+1})%mass": mass_s,
       })
 
 # Configuring case dictionary
@@ -128,7 +146,7 @@ case_dict = {
     "num_ibs": N_s,
     "viscous": "T",
     "fd_order": 4,
-    "ib_neighborhood_radius": 20,
+    "ib_neighborhood_radius": 4,
     # Formatted Database Files Structure Parameters
     "format": 1,
     "precision": 2,
@@ -149,8 +167,8 @@ case_dict = {
     "patch_icpp(1)%vel(1)": 0.0e00,
     "patch_icpp(1)%vel(2)": v_start,
     "patch_icpp(1)%vel(3)": 0.0e00,
-    "patch_icpp(1)%pres": P_start,
-    "patch_icpp(1)%alpha_rho(1)": rho_start,
+    "patch_icpp(1)%pres": P,
+    "patch_icpp(1)%alpha_rho(1)": rho,
     "patch_icpp(1)%alpha(1)": 1.0e00,
     # Patch: Sphere Immersed Boundary
     # Fluids Physical Parameters
@@ -158,22 +176,35 @@ case_dict = {
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
 
-    # ic perturb
-    "perturb_flow": "T",
-    "perturb_flow_mag": 0.25,
-    "perturb_flow_fluid": 1,
-
     # periodic forcing
     "periodic_forcing": "T",
     "u_inf_ref": v_tgt,
-    "rho_inf_ref": rho_tgt,
-    "P_inf_ref": P_tgt,
+    "rho_inf_ref": rho,
+    "P_inf_ref": P,
     "mom_f_idx": 2,
     "forcing_window": 1,
     "forcing_dt": 1.0/(alpha_forcing*dt),
     "fluid_volume_fraction": fluid_vf,
     "forcing_wrt": "T",
-    "forcing_start": forcing_start,#Nt//10,
+    "forcing_start": forcing_start,
+
+    # # controls
+    # "particle_control": "T",
+    # "particle_control_start": 5, #Nt//10,
+    # "particle_bf": -g0,
+
+    # "cntrl_p%Re_tgt": Re,
+    # "cntrl_p%M_tgt": M_tgt,
+    # "cntrl_p%K_Pg": K_Pg,
+    # "cntrl_p%K_Dg": K_Dg,
+    # "cntrl_p%K_Pp": K_Pp,
+    # "cntrl_p%window_size": W,
+
+    # # collisions
+    # "collision_model": 1,  # soft-sphere collision model
+    # "ib_coefficient_of_friction": 0.1,
+    # "collision_time": collision_time,
+    # "coefficient_of_restitution": 0.95,  # almost perfectly elastic
 
     }
 

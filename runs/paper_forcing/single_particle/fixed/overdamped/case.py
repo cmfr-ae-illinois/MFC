@@ -23,7 +23,7 @@ particle_vf = (N_s * vol_s) / (Lx * Ly * Lz)
 fluid_vf = 1.0 - particle_vf
 
 # fluid params
-M_tgt = 1.4
+M_tgt = 1.2
 Re_tgt = 500.0
 
 P_tgt = 101325.0
@@ -32,22 +32,21 @@ rho_tgt = 1.225
 v_tgt   = M_tgt * np.sqrt(gam_a * P_tgt / rho_tgt) 
 mu = rho_tgt * v_tgt * D / Re_tgt
 
-factor = 0.2
-rho_start = factor * rho_tgt
+rho_start = 0.9 * rho_tgt
 v_start = v_tgt
-P_start = (1.0 + factor) * P_tgt
+P_start = 1.1 * P_tgt
 
 # print('mu: ', mu)
 # print('v_tgt: ', v_tgt)
 # print('rho: ', rho)
 # print('Kn = ' + str( np.sqrt(np.pi*gam_a/2)*(M_tgt/Re) )) # Kn < 0.01 = continuum flow
 
-dt = 1.0e-6
+dt = 0.75e-6
 t_final = 4 * Ly / v_tgt
 Nt = int(t_final / dt)
-t_step_save = Nt // 200
+t_step_save = Nt // 50
 
-Nx = 127
+Nx = 399
 Ny = Nx
 Nz = Ny
 
@@ -159,7 +158,7 @@ case_dict = {
 
     # ic perturb
     "perturb_flow": "T",
-    "perturb_flow_mag": 0.25,
+    "perturb_flow_mag": 0.05,
     "perturb_flow_fluid": 1,
 
     # periodic forcing
@@ -172,7 +171,7 @@ case_dict = {
     "forcing_dt": 1.0/(alpha_forcing*dt),
     "fluid_volume_fraction": fluid_vf,
     "forcing_wrt": "T",
-    "forcing_start": forcing_start,#Nt//10,
+    "forcing_start": forcing_start,
 
     }
 

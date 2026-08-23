@@ -158,6 +158,11 @@ case_dict = {
     "fluid_pp(1)%pi_inf": 0,
     "fluid_pp(1)%Re(1)": 1.0 / mu,
 
+    # ic perturb
+    "perturb_flow": "T",
+    "perturb_flow_mag": 0.25,
+    "perturb_flow_fluid": 1,
+
     # periodic forcing
     "periodic_forcing": "T",
     "u_inf_ref": v_tgt,
