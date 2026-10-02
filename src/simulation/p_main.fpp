@@ -42,9 +42,10 @@ program p_main
     call s_initialize_gpu_vars()
     call nvtxEndRange
 
-    ! Setting the time-step iterator to the first time-step
+    ! Setting the time-stepper to the first time-step
     if (cfl_dt) then
         t_step = 0
+        t_step_start = 0
         mytime = t_save*n_start
     else
         t_step = t_step_start

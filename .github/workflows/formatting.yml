@@ -6,13 +6,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least-privilege default: no job in this workflow writes to the repo.
+permissions:
+  contents: read
+
 jobs:
   docs:
     name:    Formatting
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: MFC Python setup
       run: ./mfc.sh init

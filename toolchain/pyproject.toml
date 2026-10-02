@@ -12,7 +12,8 @@ dependencies = [
     "PyYAML",
     "argparse",
     "dataclasses",
-    "fastjsonschema",
+    "fastjsonschema<2.22; python_version < '3.10'",
+    "fastjsonschema; python_version >= '3.10'",
     "rapidfuzz",  # For "did you mean?" typo suggestions
 
     # Build System
@@ -24,7 +25,7 @@ dependencies = [
     # Code Health
     "typos",
     "ruff==0.6.5",
-    "ffmt==0.4.3",
+    "ffmt==0.4.5",
     "ansi2txt",
     "pytest",
 
@@ -34,8 +35,7 @@ dependencies = [
 
     # Chemistry
     "cantera>=3.1.0",
-    #"pyrometheus == 1.0.5",
-    "pyrometheus @ git+https://github.com/pyrometheus/pyrometheus.git",
+    "pymbolic>=2022.2",  # Fortran generation; allow the last Python 3.9-compatible releases
 
     # Frontier Profiling
     "astunparse==1.6.2",

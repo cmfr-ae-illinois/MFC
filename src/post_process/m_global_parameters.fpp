@@ -15,7 +15,7 @@ module m_global_parameters
     use m_helper_basic
     use m_thermochem, only: species_names
     use m_constants, only: format_silo, precision_single
-    ! Shared state: generated_decls, num_dims, num_vels, sys_size, eqn_idx, b_size, tensor_size, chemistry, elasticity, shear_*
+    ! Shared state: generated_decls, num_dims, num_vels, sys_size, eqn_idx, chemistry, shear_*
     use m_global_parameters_common
 
     implicit none
@@ -51,6 +51,11 @@ module m_global_parameters
     !> @name Cell-boundary locations in the x-, y- and z-coordinate directions
     !> @{
     real(wp), allocatable, dimension(:) :: x_cb, x_root_cb, y_cb, z_cb
+    ! Single-precision copies, handed to Silo when precision == precision_single.
+    ! Silo stores the mesh coordinates with their own datatype, independent of the
+    ! flow variables, so the mesh needs its own single-precision arrays to follow
+    ! the requested precision.
+    real(sp), allocatable, dimension(:) :: x_cb_s, y_cb_s, z_cb_s
     !> @}
 
     !> @name Cell-center locations in the x-, y- and z-coordinate directions
@@ -75,7 +80,7 @@ module m_global_parameters
 
     !> @name Simulation Algorithm Parameters
     !> @{
-    ! sys_size, elasticity, b_size, tensor_size, chemistry, eqn_idx: in m_global_parameters_common
+    ! sys_size, chemistry, eqn_idx: in m_global_parameters_common
     !> @}
 
     !> @name Annotations of the structure, i.e. the organization, of the state vectors
@@ -93,10 +98,14 @@ module m_global_parameters
     !> @name Boundary conditions in the x-, y- and z-coordinate directions
     !> @{
     type(int_bounds_info) :: bc_x, bc_y, bc_z
+    type(int_bounds_info) :: ib_bc_x, ib_bc_y, ib_bc_z  !< bc_x/y/z before decomposition overwrites them with MPI neighbor ranks
+    type(bc_xyz_info)     :: bc
     !> @}
 
     ! shear_num, shear_indices, shear_BC_flip_num, shear_BC_flip_indices: in m_global_parameters_common
     ! proc_coords, start_idx, mpiiofs, mpi_info_int: in m_global_parameters_common
+    type(int_bounds_info), dimension(3)                    :: nidx  !< Neighbor index offsets per direction (#1290 decomposition)
+    integer, allocatable, dimension(:,:,:)                 :: neighbor_ranks  !< MPI ranks of neighbors (#1290 decomposition)
     type(ib_airfoil_parameters), allocatable, dimension(:) :: ib_airfoil  !< Per-airfoil NACA parameters (unused in post_process)
     !> Per-airfoil computed surface grids (unused in post_process)
     type(ib_airfoil_grid), allocatable, dimension(:) :: ib_airfoil_grids
@@ -149,7 +158,7 @@ contains
 
         integer :: i  !< Generic loop iterator
 
-        ! Shared defaults (case_dir, m/n/p, cyl_coord, cfl flags, model_eqns, elasticity, BC blocks,
+        ! Shared defaults (case_dir, m/n/p, cyl_coord, cfl flags, model_eqns, BC blocks,
         ! recon/weno/muscl/num_fluids/igr/mhd/relativity under case-opt guard, Tait EOS, bubble flags,
         ! IB flags, parallel I/O flags, fft_wrt)
 
@@ -187,23 +196,46 @@ contains
         t_save = dflt_real
         t_stop = dflt_real
 
-        ! Simulation algorithm parameters (post-specific)
-        mixture_err = .false.
-        alt_soundspeed = .false.
-
         bc_io = .false.
         num_bc_patches = dflt_int
 
         chem_params%gamma_method = 1
         chem_params%transport_model = 1
 
+        chem_params%reaction_substeps = 0
+        chem_params%adap_substeps = .false.
+        chem_params%reaction_substeps_max = 0
+
         ! Fluids physical parameters (post-specific; G = dflt_real differs from pre/sim)
         do i = 1, num_fluids_max
+            fluid_pp(i)%eos = eos_stiffened_gas
+            fluid_pp(i)%mg_rho0 = dflt_real
+            fluid_pp(i)%mg_c0 = dflt_real
+            fluid_pp(i)%mg_s = dflt_real
+            fluid_pp(i)%mg_gruneisen = dflt_real
+            fluid_pp(i)%mg_gruneisen_a = 0._wp
+            fluid_pp(i)%mg_t0 = 0._wp
+            fluid_pp(i)%mg_s2 = 0._wp
+            fluid_pp(i)%mg_s3 = 0._wp
+            fluid_pp(i)%jwl_a = dflt_real
+            fluid_pp(i)%jwl_b = dflt_real
+            fluid_pp(i)%jwl_r1 = dflt_real
+            fluid_pp(i)%jwl_r2 = dflt_real
+            fluid_pp(i)%jwl_omega = dflt_real
+            fluid_pp(i)%jwl_rho0 = dflt_real
+            fluid_pp(i)%jwl_t0 = 0._wp
+            fluid_pp(i)%vinet_k0 = dflt_real
+            fluid_pp(i)%vinet_k0p = dflt_real
+            fluid_pp(i)%vinet_rho0 = dflt_real
+            fluid_pp(i)%vinet_gruneisen = dflt_real
+            fluid_pp(i)%vinet_gruneisen_a = 0._wp
+            fluid_pp(i)%vinet_t0 = 0._wp
             fluid_pp(i)%gamma = dflt_real
             fluid_pp(i)%pi_inf = dflt_real
             fluid_pp(i)%cv = 0._wp
             fluid_pp(i)%qv = 0._wp
             fluid_pp(i)%qvp = 0._wp
+            fluid_pp(i)%k_therm = 0._wp
             fluid_pp(i)%G = dflt_real
             fluid_pp(i)%non_newtonian = .false.
             fluid_pp(i)%K = dflt_real
@@ -213,6 +245,23 @@ contains
             fluid_pp(i)%mu_min = dflt_real
             fluid_pp(i)%mu_max = dflt_real
             fluid_pp(i)%mu_bulk = dflt_real
+        end do
+
+        num_particle_clouds = 0
+        do i = 1, num_particle_clouds_max
+            particle_cloud(i)%x_centroid = 0._wp
+            particle_cloud(i)%y_centroid = 0._wp
+            particle_cloud(i)%z_centroid = 0._wp
+            particle_cloud(i)%length_x = dflt_real
+            particle_cloud(i)%length_y = dflt_real
+            particle_cloud(i)%length_z = dflt_real
+            particle_cloud(i)%num_particles = 0
+            particle_cloud(i)%radius = dflt_real
+            particle_cloud(i)%mass = dflt_real
+            particle_cloud(i)%min_spacing = 0._wp
+            particle_cloud(i)%moving_ibm = 0
+            particle_cloud(i)%seed = 0
+            particle_cloud(i)%packing_method = dflt_int
         end do
 
         ! Subgrid bubble parameters (bub_pp struct + scalar companions; bub_pp%R0ref is set in common
@@ -262,6 +311,7 @@ contains
         prim_vars_wrt = .false.
         cons_vars_wrt = .false.
         c_wrt = .false.
+        T_wrt = .false.
         omega_wrt = .false.
         qm_wrt = .false.
         liutex_wrt = .false.
@@ -291,11 +341,9 @@ contains
         schlieren_alpha = dflt_real
 
         fd_order = dflt_int
-        avg_state = dflt_int
 
         ! Bubble modeling (post-specific)
         nb = dflt_int
-        sigR = dflt_real
 
         ! Output partial domain (post-specific)
         output_partial_domain = .false.
@@ -317,6 +365,17 @@ contains
 
         if (n == 0) m_root = m_glb
 
+        ! Declared for the common conversion kernel but not a post_process input, so it is neither
+        ! defaulted on non-root ranks nor broadcast. Post-process never carries viscous stresses.
+        viscous = .false.
+
+        ! Particle clouds expand into individual IB patches at simulation startup, so num_ibs as read
+        ! from the case file counts only the namelist patches. Match the global count the simulation
+        ! arrives at (s_read_ib_restart_data) so the IB state records can be read back.
+        do i = 1, num_particle_clouds
+            num_ibs = num_ibs + particle_cloud(i)%num_particles
+        end do
+
         ! Gamma/Pi_inf: force num_fluids=1 (post_process-specific side effect of the gamma-law model)
         if (model_eqns == model_eqns_gamma_law) num_fluids = 1
 
@@ -324,8 +383,8 @@ contains
         ! (guard matches the original site: inside the 5-equation branch)
         if (model_eqns == model_eqns_5eq .and. qbmm) nmom = 6
 
-        ! Populate eqn_idx, sys_size, b_size, tensor_size, elasticity, shear_* (shared logic)
-        call s_initialize_eqn_idx(nmom, nb)
+        ! Populate eqn_idx, sys_size, shear_* (shared logic)
+        call s_initialize_eqn_idx(nmom, nb, six_eqn_alf_is_advected=.false.)
 
         ! post-only: 6eq alf is a dummy (no void fraction in 6eq)
         if (model_eqns == model_eqns_6eq) eqn_idx%alf = 1
@@ -378,40 +437,6 @@ contains
                         qbmm_idx%ms(i) = qbmm_idx%ps(i) + 1
                     end if
                 end do
-            end if
-        end if
-
-        if (model_eqns == model_eqns_4eq .and. bubbles_euler) then
-            allocate (qbmm_idx%rs(nb), qbmm_idx%vs(nb))
-            allocate (qbmm_idx%ps(nb), qbmm_idx%ms(nb))
-            allocate (weight(nb), R0(nb))
-
-            do i = 1, nb
-                if (polytropic .neqv. .true.) then
-                    fac = 4
-                else
-                    fac = 2
-                end if
-
-                qbmm_idx%rs(i) = eqn_idx%bub%beg + (i - 1)*fac
-                qbmm_idx%vs(i) = qbmm_idx%rs(i) + 1
-
-                if (polytropic .neqv. .true.) then
-                    qbmm_idx%ps(i) = qbmm_idx%vs(i) + 1
-                    qbmm_idx%ms(i) = qbmm_idx%ps(i) + 1
-                end if
-            end do
-
-            if (nb == 1) then
-                weight(:) = 1._wp
-                R0(:) = 1._wp
-            else if (nb < 1) then
-                stop 'Invalid value of nb'
-            end if
-
-            if (polytropic) then
-                rhoref = 1._wp
-                pref = 1._wp
             end if
         end if
 
@@ -501,16 +526,28 @@ contains
         allocate (x_cc(-buff_size:m + buff_size))
         allocate (dx(-buff_size:m + buff_size))
 
+        if (precision == precision_single) then
+            allocate (x_cb_s(-1 - offset_x%beg:m + offset_x%end))
+        end if
+
         ! Allocating grid variables in the y- and z-coordinate directions
         if (n > 0) then
             allocate (y_cb(-1 - offset_y%beg:n + offset_y%end))
             allocate (y_cc(-buff_size:n + buff_size))
             allocate (dy(-buff_size:n + buff_size))
 
+            if (precision == precision_single) then
+                allocate (y_cb_s(-1 - offset_y%beg:n + offset_y%end))
+            end if
+
             if (p > 0) then
                 allocate (z_cb(-1 - offset_z%beg:p + offset_z%end))
                 allocate (z_cc(-buff_size:p + buff_size))
                 allocate (dz(-buff_size:p + buff_size))
+
+                if (precision == precision_single) then
+                    allocate (z_cb_s(-1 - offset_z%beg:p + offset_z%end))
+                end if
             end if
 
             ! Allocating the grid variables, only used for the 1D simulations, and containing the defragmented computational domain
@@ -555,12 +592,15 @@ contains
 
         ! Deallocating the grid variables for the x-coordinate direction
         deallocate (x_cc, x_cb, dx)
+        if (allocated(x_cb_s)) deallocate (x_cb_s)
 
         ! Deallocating grid variables for the y- and z-coordinate directions
         if (n > 0) then
             deallocate (y_cc, y_cb, dy)
+            if (allocated(y_cb_s)) deallocate (y_cb_s)
             if (p > 0) then
                 deallocate (z_cc, z_cb, dz)
+                if (allocated(z_cb_s)) deallocate (z_cb_s)
             end if
         else
             ! Deallocating the grid variables, only used for the 1D simulations, and containing the defragmented computational
@@ -585,6 +625,8 @@ contains
 
         if (ib) MPI_IO_IB_DATA%var%sf => null()
 #endif
+
+        if (allocated(neighbor_ranks)) deallocate (neighbor_ranks)
 
     end subroutine s_finalize_global_parameters_module
 

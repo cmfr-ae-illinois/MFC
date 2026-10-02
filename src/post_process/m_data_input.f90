@@ -40,8 +40,7 @@ module m_data_input
     type(scalar_field), allocatable, dimension(:), public    :: q_prim_vf  !< Primitive variables
     type(integer_field), allocatable, dimension(:,:), public :: bc_type    !< Boundary condition identifiers
     type(scalar_field), public                               :: q_T_sf     !< Temperature field
-    ! type(scalar_field), public :: ib_markers !<
-    type(integer_field), public :: ib_markers
+    type(integer_field), public                              :: ib_markers
 
     procedure(s_read_abstract_data_files), pointer :: s_read_data_files => null()
 
@@ -84,7 +83,7 @@ contains
         integer(KIND=MPI_OFFSET_KIND), intent(out) :: WP_MOK, MOK, str_MOK, NVARS_MOK
 
         if (ib) then
-            call s_initialize_mpi_data(q_cons_vf, ib_markers)
+            call s_initialize_mpi_data(q_cons_vf, ib_markers=ib_markers, ib_mpi_data=MPI_IO_IB_DATA)
         else
             call s_initialize_mpi_data(q_cons_vf)
         end if
@@ -105,11 +104,12 @@ contains
     !> Helper subroutine to read IB data files
     impure subroutine s_read_ib_data_files(file_loc_base, t_step)
 
-        character(len=*), intent(in)                :: file_loc_base
-        integer, intent(in), optional               :: t_step
-        character(LEN=len_trim(file_loc_base) + 20) :: file_loc
-        logical                                     :: file_exist
-        integer                                     :: ifile, ierr, data_size
+        character(len=*), intent(in)         :: file_loc_base
+        integer, intent(in), optional        :: t_step
+        character(LEN=path_len + 2*name_len) :: file_loc
+        logical                              :: file_exist
+        integer                              :: ifile, ierr, data_size
+        character(len=10)                    :: t_step_string
 
 #ifdef MFC_MPI
         integer, dimension(MPI_STATUS_SIZE) :: status
@@ -120,7 +120,11 @@ contains
 
         if (.not. ib) return
 
-        if (parallel_io) then
+        if (parallel_io .and. file_per_process) then
+            call s_int_to_str(t_step, t_step_string)
+            write (file_loc, '(A,I0,A,i7.7,A)') 'ib_markers_', t_step, '_', proc_rank, '.dat'
+            file_loc = trim(case_dir) // '/restart_data/lustre_' // trim(t_step_string) // '/' // trim(file_loc)
+        else if (parallel_io) then
             write (file_loc, '(A)') trim(file_loc_base) // 'ib.dat'
         else
             write (file_loc, '(A)') trim(file_loc_base) // '/ib_data.dat'
@@ -128,9 +132,21 @@ contains
         inquire (FILE=trim(file_loc), EXIST=file_exist)
 
         if (file_exist) then
-            if (parallel_io) then
+            if (parallel_io .and. file_per_process) then
+#ifdef MFC_MPI
+                call MPI_FILE_OPEN(MPI_COMM_SELF, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
+
+                data_size = (m + 1)*(n + 1)*(p + 1)
+
+                call MPI_FILE_READ(ifile, MPI_IO_IB_DATA%var%sf, data_size, MPI_INTEGER, status, ierr)
+
+                call MPI_FILE_CLOSE(ifile, ierr)
+#endif
+            else if (parallel_io) then
 #ifdef MFC_MPI
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 m_MOK = int(m_glb + 1, MPI_OFFSET_KIND)
                 n_MOK = int(n_glb + 1, MPI_OFFSET_KIND)
@@ -178,8 +194,9 @@ contains
             allocate (ib_markers%sf(local_start_idx:end_x,local_start_idx:end_y,local_start_idx:end_z))
         end if
 
-        if (chemistry) then
+        if (chemistry .or. heat_conduction) then
             allocate (q_T_sf%sf(local_start_idx:end_x,local_start_idx:end_y,local_start_idx:end_z))
+            q_T_sf%sf = 0._wp  ! Buffer population reads the interior before anything writes it
         end if
 
     end subroutine s_allocate_field_arrays
@@ -235,9 +252,6 @@ contains
                 open (1, FILE=trim(file_loc), form='unformatted', STATUS='old', ACTION='read')
                 read (1) q_cons_vf(i)%sf(0:m,0:n,0:p)
                 close (1)
-            else if (bubbles_lagrange .and. i == beta_idx) then
-                ! beta (Lagrangian void fraction) is not written by pre_process for t_step_start; initialize to zero.
-                q_cons_vf(i)%sf(0:m,0:n,0:p) = 0._wp
             else
                 call s_mpi_abort('File q_cons_vf' // trim(file_num) // '.dat is missing in ' // trim(t_step_dir) // '. Exiting.')
             end if
@@ -265,6 +279,8 @@ contains
         integer(kind=MPI_OFFSET_KIND)        :: offset
         character(LEN=path_len + 2*name_len) :: file_loc
         logical                              :: file_exist
+        integer(kind=8)                      :: file_bytes, bytes_needed
+        character(len=10)                    :: case_m_str, file_m_str
         character(len=10)                    :: t_step_string
         integer                              :: i
 
@@ -279,11 +295,27 @@ contains
         end if
 
         file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'x_cb.dat'
-        inquire (FILE=trim(file_loc), EXIST=file_exist)
+        inquire (FILE=trim(file_loc), EXIST=file_exist, SIZE=file_bytes)
 
+        ! The grid file holds one cell boundary per value, so its size says which grid wrote the restart. Without
+        ! this check a case file whose resolution no longer matches the run reads past the end of every restart
+        ! file and post-processes silently, exiting 0 with NaN-filled output -- which is indistinguishable from
+        ! success until someone plots it. The strided read down_sample performs touches stride*(m_glb + 1) + 1
+        ! boundaries of a full-resolution file, so it needs more of the file, not less; only the un-strided read
+        ! pins the size exactly, since down-sampling three grids of different size can land on the same m_glb.
         if (file_exist) then
+            bytes_needed = (int(stride, 8)*int(m_glb + 1, 8) + 1_8)*int(storage_size(0._wp)/8, 8)
+            if (file_bytes < bytes_needed .or. (.not. down_sample .and. file_bytes /= bytes_needed)) then
+                call s_int_to_str(m_glb, case_m_str)
+                call s_int_to_str(int(file_bytes/int(storage_size(0._wp)/8, 8)) - 2, file_m_str)
+                call s_mpi_abort('Restart grid mismatch: this case has m = ' // trim(case_m_str) // ' but ' // trim(file_loc) &
+                                 & // ' was written with m = ' // trim(file_m_str) &
+                                 & // '. Post-processing must use the same grid as the run that wrote the ' &
+                                 & // 'restart files, or it reads past the end of every file and writes NaN.')
+            end if
             data_size = m_glb + 2
             call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
 
             call MPI_TYPE_VECTOR(data_size, 1, stride, mpi_p, filetype, ierr)
             call MPI_TYPE_COMMIT(filetype, ierr)
@@ -297,9 +329,9 @@ contains
             call s_mpi_abort('File ' // trim(file_loc) // ' is missing. Exiting.')
         end if
 
-        x_cb(-1:m) = x_cb_glb((start_idx(1) - 1):(start_idx(1) + m))
-        dx(0:m) = x_cb(0:m) - x_cb(-1:m - 1)
-        x_cc(0:m) = x_cb(-1:m - 1) + dx(0:m)/2._wp
+        ! Bitwise-consistent grid distribution from the global file
+        call s_apply_grid_from_global_dim(x_cb_glb, m_glb, m, start_idx(1), bc_x%beg, bc_x%end, offset_x%beg, offset_x%end, &
+                                          & buff_size, buff_size, x_cb, x_cc, dx)
 
         if (n > 0) then
             file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'y_cb.dat'
@@ -308,6 +340,7 @@ contains
             if (file_exist) then
                 data_size = n_glb + 2
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 call MPI_TYPE_VECTOR(data_size, 1, stride, mpi_p, filetype, ierr)
                 call MPI_TYPE_COMMIT(filetype, ierr)
@@ -321,9 +354,8 @@ contains
                 call s_mpi_abort('File ' // trim(file_loc) // ' is missing. Exiting.')
             end if
 
-            y_cb(-1:n) = y_cb_glb((start_idx(2) - 1):(start_idx(2) + n))
-            dy(0:n) = y_cb(0:n) - y_cb(-1:n - 1)
-            y_cc(0:n) = y_cb(-1:n - 1) + dy(0:n)/2._wp
+            call s_apply_grid_from_global_dim(y_cb_glb, n_glb, n, start_idx(2), bc_y%beg, bc_y%end, offset_y%beg, offset_y%end, &
+                                              & buff_size, buff_size, y_cb, y_cc, dy)
 
             if (p > 0) then
                 file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'z_cb.dat'
@@ -332,6 +364,7 @@ contains
                 if (file_exist) then
                     data_size = p_glb + 2
                     call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                    call s_check_mpi_file_open(ierr, file_loc)
 
                     call MPI_TYPE_VECTOR(data_size, 1, stride, mpi_p, filetype, ierr)
                     call MPI_TYPE_COMMIT(filetype, ierr)
@@ -345,9 +378,8 @@ contains
                     call s_mpi_abort('File ' // trim(file_loc) // ' is missing. Exiting.')
                 end if
 
-                z_cb(-1:p) = z_cb_glb((start_idx(3) - 1):(start_idx(3) + p))
-                dz(0:p) = z_cb(0:p) - z_cb(-1:p - 1)
-                z_cc(0:p) = z_cb(-1:p - 1) + dz(0:p)/2._wp
+                call s_apply_grid_from_global_dim(z_cb_glb, p_glb, p, start_idx(3), bc_z%beg, bc_z%end, offset_z%beg, &
+                                                  & offset_z%end, buff_size, buff_size, z_cb, z_cc, dz)
             end if
         end if
 
@@ -387,12 +419,13 @@ contains
 
             if (file_exist) then
                 call MPI_FILE_OPEN(MPI_COMM_SELF, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 if (down_sample) then
-                    call s_initialize_mpi_data_ds(q_cons_temp)
+                    call s_initialize_mpi_data_ds(m, n, p, q_cons_temp)
                 else
                     if (ib) then
-                        call s_initialize_mpi_data(q_cons_vf, ib_markers)
+                        call s_initialize_mpi_data(q_cons_vf, ib_markers=ib_markers, ib_mpi_data=MPI_IO_IB_DATA)
                     else
                         call s_initialize_mpi_data(q_cons_vf)
                     end if
@@ -412,7 +445,7 @@ contains
                 str_MOK = int(name_len, MPI_OFFSET_KIND)
                 NVARS_MOK = int(sys_size, MPI_OFFSET_KIND)
 
-                if (bubbles_euler .or. elasticity .or. mhd) then
+                if (bubbles_euler .or. hypoelasticity .or. mhd) then
                     do i = 1, sys_size
                         var_MOK = int(i, MPI_OFFSET_KIND)
                         call MPI_FILE_READ_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size*mpi_io_type, mpi_io_p, status, ierr)
@@ -444,6 +477,7 @@ contains
 
             if (file_exist) then
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 call s_setup_mpi_io_params(data_size, m_MOK, n_MOK, p_MOK, WP_MOK, MOK, str_MOK, NVARS_MOK)
 
@@ -534,7 +568,7 @@ contains
             deallocate (ib_markers%sf)
         end if
 
-        if (chemistry) then
+        if (chemistry .or. heat_conduction) then
             deallocate (q_T_sf%sf)
         end if
 

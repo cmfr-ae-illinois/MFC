@@ -28,7 +28,7 @@ module m_data_output
 
     private
     public :: s_write_serial_data_files, s_write_parallel_data_files, s_write_data_files, s_initialize_data_output_module, &
-        & s_finalize_data_output_module
+        & s_finalize_data_output_module, s_write_ib_state_0_file
 
     type(scalar_field), allocatable, dimension(:) :: q_cons_temp
 
@@ -67,7 +67,7 @@ contains
         integer                                                     :: t_step
         real(wp), dimension(nb)                                     :: nRtmp
         real(wp)                                                    :: nbub
-        real(wp)                                                    :: gamma, lit_gamma, pi_inf, qv
+        real(wp)                                                    :: gamma, pi_inf, qv
         real(wp)                                                    :: rho
         real(wp)                                                    :: pres, T
         real(wp)                                                    :: rhoYks(1:num_species)
@@ -121,6 +121,27 @@ contains
             close (1)
         end do
 
+        if (bubbles_lagrange) then
+            block
+                real(stp), allocatable                         :: beta_ones(:,:,:)
+                character(LEN=len_trim(t_step_dir) + name_len) :: beta_file_loc
+                integer                                        :: jj, kk, ll
+                allocate (beta_ones(0:m,0:n,0:p))
+                do ll = 0, p
+                    do kk = 0, n
+                        do jj = 0, m
+                            beta_ones(jj, kk, ll) = 1.0_stp
+                        end do
+                    end do
+                end do
+                write (beta_file_loc, '(A,I0,A)') trim(t_step_dir) // '/q_cons_vf', sys_size + 1, '.dat'
+                open (1, FILE=trim(beta_file_loc), form='unformatted', STATUS=status)
+                write (1) beta_ones
+                close (1)
+                deallocate (beta_ones)
+            end block
+        end if
+
         if (qbmm .and. .not. polytropic) then
             do i = 1, nb
                 do r = 1, nnode
@@ -142,11 +163,6 @@ contains
                 end do
             end do
         end if
-
-        gamma = gammas(1)
-        lit_gamma = gs_min(1)
-        pi_inf = pi_infs(1)
-        qv = qvs(1)
 
         if (precision == precision_single) then
             FMT = "(2F30.3)"
@@ -177,8 +193,6 @@ contains
                         end if
 
                         call s_convert_to_mixture_variables(q_cons_vf, j, 0, 0, rho, gamma, pi_inf, qv)
-
-                        lit_gamma = 1._wp/gamma + 1._wp
 
                         if ((i >= eqn_idx%species%beg) .and. (i <= eqn_idx%species%end)) then
                             write (2, FMT) x_cb(j), q_cons_vf(i)%sf(j, 0, 0)/rho
@@ -433,12 +447,12 @@ contains
                 call s_create_directory(trim(file_loc))
             end if
             call s_mpi_barrier()
-            call DelayFileAccess(proc_rank)
+            call s_delay_file_access(proc_rank)
 
             if (down_sample) then
-                call s_initialize_mpi_data_ds(q_cons_temp)
+                call s_initialize_mpi_data_ds(m_ds, n_ds, p_ds)
             else
-                call s_initialize_mpi_data(q_cons_vf)
+                call s_initialize_mpi_data(q_cons_vf, qbmm_pb=pb, qbmm_mv=mv)
             end if
 
             if (cfl_dt) then
@@ -453,6 +467,7 @@ contains
             end if
             if (file_exist) call MPI_FILE_DELETE(file_loc, mpi_info_int, ierr)
             call MPI_FILE_OPEN(MPI_COMM_SELF, file_loc, ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
 
             if (down_sample) then
                 data_size = (m_ds + 3)*(n_ds + 3)*(p_ds + 3)
@@ -504,9 +519,26 @@ contains
                 end if
             end if
 
+            if (bubbles_lagrange) then
+                block
+                    real(stp), allocatable :: beta_ones(:,:,:)
+                    integer                :: jj, kk, ll
+                    allocate (beta_ones(0:m,0:n,0:p))
+                    do ll = 0, p
+                        do kk = 0, n
+                            do jj = 0, m
+                                beta_ones(jj, kk, ll) = 1.0_stp
+                            end do
+                        end do
+                    end do
+                    call MPI_FILE_WRITE_ALL(ifile, beta_ones, data_size*mpi_io_type, mpi_io_p, status, ierr)
+                    deallocate (beta_ones)
+                end block
+            end if
+
             call MPI_FILE_CLOSE(ifile, ierr)
         else
-            call s_initialize_mpi_data(q_cons_vf)
+            call s_initialize_mpi_data(q_cons_vf, qbmm_pb=pb, qbmm_mv=mv)
 
             if (cfl_dt) then
                 write (file_loc, '(I0,A)') n_start, '.dat'
@@ -519,6 +551,7 @@ contains
                 call MPI_FILE_DELETE(file_loc, mpi_info_int, ierr)
             end if
             call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
 
             data_size = (m + 1)*(n + 1)*(p + 1)
 
@@ -559,6 +592,26 @@ contains
                     call MPI_FILE_SET_VIEW(ifile, disp, mpi_io_p, MPI_IO_DATA%view(i), 'native', mpi_info_int, ierr)
                     call MPI_FILE_WRITE_ALL(ifile, MPI_IO_DATA%var(i)%sf, data_size*mpi_io_type, mpi_io_p, status, ierr)
                 end do
+            end if
+
+            if (bubbles_lagrange) then
+                block
+                    real(stp), allocatable :: beta_ones(:,:,:)
+                    integer                :: jj, kk, ll
+                    allocate (beta_ones(0:m,0:n,0:p))
+                    do ll = 0, p
+                        do kk = 0, n
+                            do jj = 0, m
+                                beta_ones(jj, kk, ll) = 1.0_stp
+                            end do
+                        end do
+                    end do
+                    var_MOK = int(sys_size + 1, MPI_OFFSET_KIND)
+                    disp = m_MOK*max(MOK, n_MOK)*max(MOK, p_MOK)*WP_MOK*(var_MOK - 1)
+                    call MPI_FILE_SET_VIEW(ifile, disp, mpi_io_p, MPI_IO_DATA%view(1), 'native', mpi_info_int, ierr)
+                    call MPI_FILE_WRITE_ALL(ifile, beta_ones, data_size*mpi_io_type, mpi_io_p, status, ierr)
+                    deallocate (beta_ones)
+                end block
             end if
 
             call MPI_FILE_CLOSE(ifile, ierr)
@@ -652,7 +705,6 @@ contains
         call write_range(eqn_idx%bub%beg, eqn_idx%bub%end, " Bubbles")
         call write_range(eqn_idx%stress%beg, eqn_idx%stress%end, " Stress")
         call write_range(eqn_idx%int_en%beg, eqn_idx%int_en%end, " Internal Energies")
-        call write_range(eqn_idx%xi%beg, eqn_idx%xi%end, " Reference Map")
         call write_range(eqn_idx%B%beg, eqn_idx%B%end, " Magnetic Field")
         call write_range(eqn_idx%c, eqn_idx%c, " Color Function")
         call write_range(eqn_idx%species%beg, eqn_idx%species%end, " Chemistry")
@@ -682,6 +734,75 @@ contains
         end subroutine write_range
 
     end subroutine s_initialize_data_output_module
+
+    !> @brief Writes the initial IB layout (namelist patch_ib entries, then generated particle-cloud beds) that simulation reads
+    !! back at startup (s_read_ib_restart_data, src/simulation/m_start_up.fpp), in the layouts simulation's own IB state writers
+    !! use. Under file_per_process each rank writes only the IBs it owns to restart_data/lustre_0/ib_state_0_<rank>.dat; otherwise
+    !! only rank 0 calls this and writes every IB, in global-id order, to restart_data/ib_state_0.dat.
+    impure subroutine s_write_ib_state_0_file(glb_bounds, particle_cloud_ibs, num_particle_cloud_ibs)
+
+        type(bounds_info), dimension(3), intent(in)         :: glb_bounds
+        type(ib_patch_parameters), dimension(:), intent(in) :: particle_cloud_ibs
+        integer, intent(in)                                 :: num_particle_cloud_ibs
+        character(LEN=len_trim(case_dir) + 2*name_len)      :: file_loc
+        integer                                             :: i, ios, file_unit
+        logical, dimension(num_ibs)                         :: owned
+        real(wp), dimension(3)                              :: centroid
+
+        if (file_per_process) then
+            do i = 1, num_ibs
+                centroid = [patch_ib(i)%x_centroid, patch_ib(i)%y_centroid, patch_ib(i)%z_centroid]
+                owned(i) = f_local_rank_owns_location(centroid, glb_bounds)
+            end do
+
+            if (proc_rank == 0) call s_create_directory(trim(case_dir) // '/restart_data/lustre_0')
+            call s_mpi_barrier()
+            call s_delay_file_access(proc_rank)
+            write (file_loc, '(A,i7.7,A)') '/restart_data/lustre_0/ib_state_0_', proc_rank, '.dat'
+        else
+            owned = .true.
+            call s_create_directory(trim(case_dir) // '/restart_data')
+            file_loc = '/restart_data/ib_state_0.dat'
+        end if
+        file_loc = trim(case_dir) // trim(file_loc)
+
+        open (newunit=file_unit, file=trim(file_loc), form='unformatted', access='stream', status='replace', iostat=ios)
+        if (ios /= 0) call s_mpi_abort('Cannot open IB state output file: ' // trim(file_loc))
+
+        if (file_per_process) write (file_unit) count(owned) + num_particle_cloud_ibs
+        do i = 1, num_ibs
+            if (owned(i)) call s_write_ib_state_record(patch_ib(i), i)
+        end do
+        do i = 1, num_particle_cloud_ibs
+            call s_write_ib_state_record(particle_cloud_ibs(i), particle_cloud_ibs(i)%gbl_patch_id)
+        end do
+
+        close (file_unit)
+
+    contains
+
+        !> Writes one 20-field IB state record, prefixed by its global id under file_per_process.
+        subroutine s_write_ib_state_record(ib_patch, gbl_id)
+
+            type(ib_patch_parameters), intent(in) :: ib_patch
+            integer, intent(in)                   :: gbl_id
+            real(wp), dimension(20)               :: ib_buf
+
+            ib_buf = 0._wp
+            ib_buf(8:10) = ib_patch%vel
+            ib_buf(11:13) = ib_patch%angular_vel
+            ib_buf(14:16) = ib_patch%angles
+            ib_buf(17) = ib_patch%x_centroid
+            ib_buf(18) = ib_patch%y_centroid
+            ib_buf(19) = ib_patch%z_centroid
+            ib_buf(20) = ib_patch%radius
+
+            if (file_per_process) write (file_unit) gbl_id
+            write (file_unit) ib_buf
+
+        end subroutine s_write_ib_state_record
+
+    end subroutine s_write_ib_state_0_file
 
     !> Resets s_write_data_files pointer
     impure subroutine s_finalize_data_output_module

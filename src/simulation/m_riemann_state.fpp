@@ -11,7 +11,7 @@ module m_riemann_state
 
     use m_derived_types
     use m_global_parameters
-    use m_constants, only: riemann_solver_hll, riemann_solver_hlld
+    use m_constants, only: riemann_solver_hll, riemann_solver_hlld, verysmall
     use m_hb_function
 
     implicit none
@@ -29,6 +29,21 @@ module m_riemann_state
     !> @{
     real(wp), allocatable, dimension(:,:,:,:) :: flux_gsrc_rsx_vf
     $:GPU_DECLARE(create='[flux_gsrc_rsx_vf]')
+
+    real(wp), allocatable, dimension(:,:,:,:) :: nc_iface_vel_rsx_vf
+    $:GPU_DECLARE(create='[nc_iface_vel_rsx_vf]')
+
+    !> Dual-pass HLLD second flux set: the hat_R-anchored fluxes (and, for axisymmetric runs, the hat_R interface velocities)
+    !! written by the same fused solve that fills flux_rsx / nc_iface_vel_rsx with the hat_L-anchored values. Allocated only when
+    !! hypo_nc_mode_dual_pass.
+    real(wp), allocatable, dimension(:,:,:,:) :: flux_hatR_rsx_vf
+    $:GPU_DECLARE(create='[flux_hatR_rsx_vf]')
+
+    real(wp), allocatable, dimension(:,:,:,:) :: nc_iface_vel_hatR_rsx_vf
+    $:GPU_DECLARE(create='[nc_iface_vel_hatR_rsx_vf]')
+
+    real(wp), allocatable, dimension(:,:,:,:) :: flux_gsrc_hatR_rsx_vf
+    $:GPU_DECLARE(create='[flux_gsrc_hatR_rsx_vf]')
     !> @}
 
     ! Cell-boundary velocity from Riemann solution; used for source flux
@@ -57,6 +72,191 @@ module m_riemann_state
     $:GPU_DECLARE(create='[Res_gs]')
 
 contains
+
+    !> Elastic signal speed of Rodriguez et al. JCP (2019): the acoustic speed stiffened by the shear modulus and the normal elastic
+    !! stress. Callers subtract it for the left-going wave and add it for the right-going one.
+    function f_elastic_signal_speed(c, G, tau, rho) result(a)
+
+        $:GPU_ROUTINE(function_name='f_elastic_signal_speed', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: c, G, tau, rho
+        real(wp)             :: a
+
+        a = sqrt(max(verysmall, c*c + (((4._wp*G)/3._wp) + tau)/rho))
+
+    end function f_elastic_signal_speed
+
+    !> Low-Mach parameter of Thornber et al. JCP (2008): the larger of the two face Mach numbers, capped at one so the correction
+    !! switches itself off once the flow is no longer low speed.
+    function f_low_Mach_zcoef(vel_L_rms, vel_R_rms, c_L, c_R) result(zcoef)
+
+        $:GPU_ROUTINE(function_name='f_low_Mach_zcoef', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: vel_L_rms, vel_R_rms  !< Left and right squared velocity magnitudes
+        real(wp), intent(in) :: c_L, c_R              !< Left and right sound speeds
+        real(wp)             :: zcoef
+
+        zcoef = min(1._wp, max(vel_L_rms**5.e-1_wp/c_L, vel_R_rms**5.e-1_wp/c_R))
+
+    end function f_low_Mach_zcoef
+
+    !> Low-Mach pressure correction added to the HLL and Lax-Friedrichs fluxes, which restores the pressure jump that the
+    !! dissipation of those fluxes over-damps at low Mach number. Zero unless low_Mach == 1.
+    function f_low_Mach_pcorr_hll(vel_L_rms, vel_R_rms, c_L, c_R, rho_L, rho_R, s_M, s_P) result(pcorr)
+
+        $:GPU_ROUTINE(function_name='f_low_Mach_pcorr_hll', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: vel_L_rms, vel_R_rms  !< Left and right squared velocity magnitudes
+        real(wp), intent(in) :: c_L, c_R              !< Left and right sound speeds
+        real(wp), intent(in) :: rho_L, rho_R          !< Left and right densities
+        real(wp), intent(in) :: s_M, s_P              !< Clamped left and right wave speeds
+        real(wp)             :: pcorr
+
+        pcorr = 0._wp
+        if (low_Mach == 1) then
+            pcorr = -(s_P - s_M)*(rho_L + rho_R)/8._wp*(f_low_Mach_zcoef(vel_L_rms, vel_R_rms, c_L, c_R) - 1._wp)
+        end if
+
+    end function f_low_Mach_pcorr_hll
+
+    !> The same correction for the HLLC flux, where the star state supplies the pressure jump directly and the correction scales
+    !! with the mass flux through the acoustic waves instead. Zero unless low_Mach == 1.
+    function f_low_Mach_pcorr_hllc(vel_L_rms, vel_R_rms, c_L, c_R, rho_L, rho_R, s_L, s_R, vel_L_norm, vel_R_norm) result(pcorr)
+
+        $:GPU_ROUTINE(function_name='f_low_Mach_pcorr_hllc', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: vel_L_rms, vel_R_rms    !< Left and right squared velocity magnitudes
+        real(wp), intent(in) :: c_L, c_R                !< Left and right sound speeds
+        real(wp), intent(in) :: rho_L, rho_R            !< Left and right densities
+        real(wp), intent(in) :: s_L, s_R                !< Left and right wave speeds
+        real(wp), intent(in) :: vel_L_norm, vel_R_norm  !< Left and right wave-normal velocities
+        real(wp)             :: pcorr
+
+        pcorr = 0._wp
+        if (low_Mach == 1) then
+            pcorr = rho_L*rho_R*(s_L - vel_L_norm)*(s_R - vel_R_norm)*(vel_R_norm - vel_L_norm)/(rho_R*(s_R - vel_R_norm) &
+                                 & - rho_L*(s_L - vel_L_norm))*(f_low_Mach_zcoef(vel_L_rms, vel_R_rms, c_L, c_R) - 1._wp)
+        end if
+
+    end function f_low_Mach_pcorr_hllc
+
+    !> The alternative low-Mach treatment of Thornber et al. JCP (2008) selected by low_Mach == 2: rather than correct the flux,
+    !! blend the wave-normal velocities towards their mean before the wave speeds are computed, which is why this mutates its
+    !! arguments and must be called ahead of s_L, s_R and s_S. The tangential velocities and vel_L/R_rms are deliberately left
+    !! untouched.
+    subroutine s_apply_low_Mach_velocity(vel_L_rms, vel_R_rms, c_L, c_R, vel_L_norm, vel_R_norm)
+
+        $:GPU_ROUTINE(function_name='s_apply_low_Mach_velocity', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in)    :: vel_L_rms, vel_R_rms    !< Left and right squared velocity magnitudes
+        real(wp), intent(in)    :: c_L, c_R                !< Left and right sound speeds
+        real(wp), intent(inout) :: vel_L_norm, vel_R_norm  !< Left and right wave-normal velocities, blended in place
+        real(wp)                :: zcoef, vel_L_tmp, vel_R_tmp
+
+        zcoef = f_low_Mach_zcoef(vel_L_rms, vel_R_rms, c_L, c_R)
+
+        vel_L_tmp = 5.e-1_wp*((vel_L_norm + vel_R_norm) + zcoef*(vel_L_norm - vel_R_norm))
+        vel_R_tmp = 5.e-1_wp*((vel_L_norm + vel_R_norm) + zcoef*(vel_R_norm - vel_L_norm))
+
+        vel_L_norm = vel_L_tmp
+        vel_R_norm = vel_R_tmp
+
+    end subroutine s_apply_low_Mach_velocity
+
+    !> Interface-averaged state that the pressure-based wave-speed estimate reads. avg_state selects between the density-weighted
+    !! Roe average, which costs eight square roots per face, and the plain arithmetic mean; unlike the other solver switches this
+    !! one is not implied by the call site, so the dispatch stays here.
+    subroutine s_compute_average_state(rho_L, rho_R, vel_L, vel_R, H_L, H_R, gamma_L, gamma_R, qv_L, qv_R, rho_avg, vel_avg_rms, &
+                                       & H_avg, gamma_avg, qv_avg)
+
+        $:GPU_ROUTINE(function_name='s_compute_average_state', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: rho_L, rho_R      !< Left and right densities
+        real(wp), intent(in) :: H_L, H_R          !< Left and right total enthalpies
+        real(wp), intent(in) :: gamma_L, gamma_R  !< Left and right specific heat ratio functions
+        real(wp), intent(in) :: qv_L, qv_R        !< Left and right reference energies
+        #:if not MFC_CASE_OPTIMIZATION and USING_AMD
+            real(wp), dimension(3), intent(in) :: vel_L, vel_R
+        #:else
+            real(wp), dimension(num_vels), intent(in) :: vel_L, vel_R
+        #:endif
+        real(wp), intent(out) :: rho_avg, H_avg, gamma_avg, qv_avg
+        real(wp), intent(out) :: vel_avg_rms  !< Squared magnitude of the averaged velocity, summed over all components
+        integer               :: i
+
+        vel_avg_rms = 0._wp
+
+        if (avg_state == avg_state_roe) then
+            rho_avg = sqrt(rho_L*rho_R)
+
+            $:GPU_LOOP(parallelism='[seq]')
+            do i = 1, num_vels
+                vel_avg_rms = vel_avg_rms + (sqrt(rho_L)*vel_L(i) + sqrt(rho_R)*vel_R(i))**2._wp/(sqrt(rho_L) + sqrt(rho_R))**2._wp
+            end do
+
+            H_avg = (sqrt(rho_L)*H_L + sqrt(rho_R)*H_R)/(sqrt(rho_L) + sqrt(rho_R))
+            gamma_avg = (sqrt(rho_L)*gamma_L + sqrt(rho_R)*gamma_R)/(sqrt(rho_L) + sqrt(rho_R))
+            qv_avg = (sqrt(rho_L)*qv_L + sqrt(rho_R)*qv_R)/(sqrt(rho_L) + sqrt(rho_R))
+        else
+            rho_avg = 5.e-1_wp*(rho_L + rho_R)
+
+            $:GPU_LOOP(parallelism='[seq]')
+            do i = 1, num_vels
+                vel_avg_rms = vel_avg_rms + (5.e-1_wp*(vel_L(i) + vel_R(i)))**2._wp
+            end do
+
+            H_avg = 5.e-1_wp*(H_L + H_R)
+            gamma_avg = 5.e-1_wp*(gamma_L + gamma_R)
+            qv_avg = 5.e-1_wp*(qv_L + qv_R)
+        end if
+
+    end subroutine s_compute_average_state
+
+    !> Roe-averaged reacting-mixture quantities: replaces gamma_avg with the mixture Cp/Cv and builds the c_sum_Yi_Phi term
+    !! s_compute_speed_of_sound_avg needs. vel_avg_rms must be the full squared magnitude - its Phi_avg and vel_sum terms cancel to
+    !! leave the Roe sound speed, and only do so for the full magnitude.
+    subroutine s_compute_chemistry_average_state(rho_L, rho_R, T_L, T_R, Ys_L, Ys_R, R_species, h_iL, h_iR, Cp_iL, Cp_iR, &
+        & vel_avg_rms, gamma_avg, c_sum_Yi_Phi)
+
+        $:GPU_ROUTINE(function_name='s_compute_chemistry_average_state', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: rho_L, rho_R  !< Left and right densities
+        real(wp), intent(in) :: T_L, T_R      !< Left and right temperatures
+        real(wp), intent(in) :: vel_avg_rms   !< Squared magnitude of the averaged velocity
+        !> Per-species gas constants, formed by the caller: nvfortran cannot compile a caller that passes the constant
+        !! molecular_weights array into a declare-target routine.
+        !> Species enthalpies and heat capacities, evaluated by the caller. m_thermochem is called from the loop body rather than
+        !! from here: CCE faults the GPU on that call one routine deeper.
+        real(wp), dimension(${NUM_SPECIES}$), intent(in) :: Ys_L, Ys_R, R_species, h_iL, h_iR, Cp_iL, Cp_iR
+        real(wp), intent(out)                            :: gamma_avg  !< Mixture Cp/Cv, replacing the density-weighted average
+        real(wp), intent(out)                            :: c_sum_Yi_Phi
+        real(wp), dimension(${NUM_SPECIES}$)             :: Yi_avg, Phi_avg, h_avg_2
+        real(wp)                                         :: Cp_avg, Cv_avg, T_avg, eps
+
+        eps = 0.001_wp
+
+        h_avg_2(1:num_species) = (sqrt(rho_L)*h_iL(1:num_species) + sqrt(rho_R)*h_iR(1:num_species))/(sqrt(rho_L) + sqrt(rho_R))
+        Yi_avg(1:num_species) = (sqrt(rho_L)*Ys_L(1:num_species) + sqrt(rho_R)*Ys_R(1:num_species))/(sqrt(rho_L) + sqrt(rho_R))
+        T_avg = (sqrt(rho_L)*T_L + sqrt(rho_R)*T_R)/(sqrt(rho_L) + sqrt(rho_R))
+
+        if (abs(T_L - T_R) < eps) then
+            ! Case when T_L and T_R are very close
+            Cp_avg = sum(Yi_avg(1:num_species)*(0.5_wp*Cp_iL(1:num_species) + 0.5_wp*Cp_iR(1:num_species))*R_species(1:num_species))
+            Cv_avg = sum(Yi_avg(1:num_species)*((0.5_wp*Cp_iL(1:num_species) + 0.5_wp*Cp_iR(1:num_species)) &
+                         & *R_species(1:num_species) - R_species(1:num_species)))
+        else
+            ! Normal calculation when T_L and T_R are sufficiently different
+            Cp_avg = sum(Yi_avg(1:num_species)*(h_iR(1:num_species) - h_iL(1:num_species))/(T_R - T_L))
+            Cv_avg = sum(Yi_avg(1:num_species)*((h_iR(1:num_species) - h_iL(1:num_species))/(T_R - T_L) - R_species(1:num_species)))
+        end if
+
+        gamma_avg = Cp_avg/Cv_avg
+
+        Phi_avg(1:num_species) = (gamma_avg - 1._wp)*(vel_avg_rms/2.0_wp - h_avg_2(1:num_species)) &
+                & + gamma_avg*R_species(1:num_species)*T_avg
+        c_sum_Yi_Phi = sum(Yi_avg(1:num_species)*Phi_avg(1:num_species))
+
+    end subroutine s_compute_chemistry_average_state
 
     !> Dispatch to the subroutines that are utilized to compute the viscous source fluxes for either Cartesian or cylindrical
     !! geometries. For more information please refer to: 1) s_compute_cartesian_viscous_source_flux 2)
@@ -107,13 +307,19 @@ contains
 
         $:GPU_UPDATE(device='[is1, is2, is3]')
 
-        if (elasticity) then
+        if (hypoelasticity) then
+            ! dir_idx_tau(1:3) = (nn, nt, nt2): face-normal stress row for wave speeds and momentum flux. stress_perm(1:n_stress) =
+            ! full tensor permutation mapping F_HLL local basis index -> physical storage index. Local order: (nn, nt, tt, nt2,
+            ! t1t2, t2t2). In 2D only entries 1-3 are used.
             if (norm_dir == 1) then
                 dir_idx_tau = (/1, 2, 4/)
+                stress_perm = (/1, 2, 3, 4, 5, 6/)
             else if (norm_dir == 2) then
                 dir_idx_tau = (/3, 2, 5/)
+                stress_perm = (/3, 2, 1, 5, 4, 6/)
             else
                 dir_idx_tau = (/6, 4, 5/)
+                stress_perm = (/6, 4, 1, 5, 2, 3/)
             end if
         end if
 
@@ -121,7 +327,7 @@ contains
         ! for stuff in the same module
         $:GPU_UPDATE(device='[isx, isy, isz]')
         ! for stuff in different modules
-        $:GPU_UPDATE(device='[dir_idx, dir_flg, dir_idx_tau]')
+        $:GPU_UPDATE(device='[dir_idx, dir_flg, dir_idx_tau, stress_perm]')
 
         ! Population of Buffers in x-direction
         if (norm_dir == 1) then
@@ -419,7 +625,7 @@ contains
         ! Reshaping Inputted Data in x-direction
 
         if (norm_dir == 1) then
-            if (viscous .or. (surface_tension)) then
+            if (viscous .or. surface_tension .or. heat_conduction) then
                 $:GPU_PARALLEL_LOOP(collapse=4)
                 do i = eqn_idx%mom%beg, eqn_idx%E
                     do l = is3%beg, is3%end
@@ -465,7 +671,7 @@ contains
 
             ! Reshaping Inputted Data in y-direction
         else if (norm_dir == 2) then
-            if (viscous .or. (surface_tension)) then
+            if (viscous .or. surface_tension .or. heat_conduction) then
                 $:GPU_PARALLEL_LOOP(collapse=4)
                 do i = eqn_idx%mom%beg, eqn_idx%E
                     do l = is3%beg, is3%end
@@ -511,7 +717,7 @@ contains
 
             ! Reshaping Inputted Data in z-direction
         else
-            if (viscous .or. (surface_tension)) then
+            if (viscous .or. surface_tension .or. heat_conduction) then
                 $:GPU_PARALLEL_LOOP(collapse=4)
                 do i = eqn_idx%mom%beg, eqn_idx%E
                     do j = is1%beg, is1%end
@@ -920,7 +1126,6 @@ contains
                     end if
 
                     if (shear_stress) then
-                        ! current_tau_shear = 0.0_wp
                         call s_calculate_shear_stress_tensor(vel_grad_avg, Re_shear, divergence_v, current_tau_shear)
 
                         do i_dim = 1, num_dims
@@ -934,7 +1139,6 @@ contains
                     end if
 
                     if (bulk_stress) then
-                        ! current_tau_bulk = 0.0_wp
                         call s_calculate_bulk_stress_tensor(Re_bulk, divergence_v, current_tau_bulk)
 
                         do i_dim = 1, num_dims
@@ -1009,152 +1213,290 @@ contains
 
     end subroutine s_calculate_bulk_stress_tensor
 
-    !> Deallocation and/or disassociation procedures that are needed to finalize the selected Riemann problem solver
-    subroutine s_finalize_riemann_solver(flux_vf, flux_src_vf, flux_gsrc_vf, norm_dir)
+    !> Compute the shear and volume Reynolds numbers of one Riemann state by inverse-weighting the fluid Reynolds numbers with the
+    !! volume fractions.
+    subroutine s_compute_interface_reynolds(alpha_K, Re_K, Re_size_loc1, Re_size_loc2)
 
-        type(scalar_field), dimension(sys_size), intent(inout) :: flux_vf, flux_src_vf, flux_gsrc_vf
-        integer, intent(in)                                    :: norm_dir
-        integer                                                :: i, j, k, l  !< Generic loop iterators
-        ! Reshaping Outputted Data in y-direction
+        $:GPU_ROUTINE(function_name='s_compute_interface_reynolds', parallelism='[seq]', cray_inline=True)
 
-        if (norm_dir == 2) then
-            $:GPU_PARALLEL_LOOP(collapse=4)
-            do i = 1, sys_size
-                do l = is3%beg, is3%end
-                    do j = is1%beg, is1%end
-                        do k = is2%beg, is2%end
-                            flux_vf(i)%sf(k, j, l) = flux_rsx_vf(k, j, l, i)
-                        end do
-                    end do
-                end do
+        #:if not MFC_CASE_OPTIMIZATION and USING_AMD
+            real(wp), dimension(3), intent(in) :: alpha_K
+        #:else
+            real(wp), dimension(num_fluids), intent(in) :: alpha_K
+        #:endif
+        real(wp), dimension(2), intent(out) :: Re_K
+        !> host copies of Re_size; amdflang reads the declare-target original stale cross-TU
+        integer, intent(in) :: Re_size_loc1, Re_size_loc2
+        integer             :: i, q  !< Loop iterators
+
+        $:GPU_LOOP(parallelism='[seq]')
+        do i = 1, 2
+            Re_K(i) = dflt_real
+
+            if (merge(Re_size_loc1, Re_size_loc2, i == 1) > 0) Re_K(i) = 0._wp
+
+            $:GPU_LOOP(parallelism='[seq]')
+            do q = 1, merge(Re_size_loc1, Re_size_loc2, i == 1)
+                Re_K(i) = alpha_K(Re_idx(i, q))/Res_gs(i, q) + Re_K(i)
             end do
-            $:END_GPU_PARALLEL_LOOP()
 
-            if (cyl_coord) then
-                $:GPU_PARALLEL_LOOP(collapse=4)
-                do i = 1, sys_size
-                    do l = is3%beg, is3%end
-                        do j = is1%beg, is1%end
-                            do k = is2%beg, is2%end
-                                flux_gsrc_vf(i)%sf(k, j, l) = flux_gsrc_rsx_vf(k, j, l, i)
-                            end do
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
+            Re_K(i) = 1._wp/max(Re_K(i), sgm_eps)
+        end do
+
+    end subroutine s_compute_interface_reynolds
+
+    !> Accumulate the hypoelastic stress contribution to the energies of the left and right Riemann states: mix the shear modulus
+    !! over the fluids, add the elastic energy of each stress component (doubled for the shear components) on each side whose
+    !! mixture modulus is non-negligible, then scale the returned moduli by the continuum damage state when damage is modeled
+    !! (energy uses the undamaged modulus; the damaged moduli feed the callers' wave speeds). The elastic shear stresses are loaded
+    !! from the state buffers by the caller, which reuses them for the stress fluxes and elastic wave speeds. The G > verysmall
+    !! per-side gate is a deliberate maintainer ruling that replaces HLL's former hard-coded G > 1000 stability floor, retiring its
+    !! "TODO take out if statement if stable without".
+    subroutine s_compute_hypoelastic_interface_energy(nf, alpha_L, alpha_R, damage_L, damage_R, tau_e_L, tau_e_R, G_L, G_R, E_L, &
+        & E_R)
+
+        $:GPU_ROUTINE(function_name='s_compute_hypoelastic_interface_energy', parallelism='[seq]', cray_inline=True)
+
+        integer, intent(in)                 :: nf                  !< Number of fluids to mix the shear modulus over
+        real(wp), dimension(nf), intent(in) :: alpha_L, alpha_R    !< Left and right volume fractions
+        real(wp), intent(in)                :: damage_L, damage_R  !< Continuum damage states (referenced only when cont_damage)
+        real(wp), dimension(6), intent(in)  :: tau_e_L, tau_e_R    !< Left and right elastic shear stresses
+        real(wp), intent(out)               :: G_L, G_R            !< Left and right mixture shear moduli
+        real(wp), intent(inout)             :: E_L, E_R            !< Left and right state energies
+        integer                             :: i                   !< Loop iterator
+
+        G_L = 0._wp; G_R = 0._wp
+
+        $:GPU_LOOP(parallelism='[seq]')
+        do i = 1, nf
+            G_L = G_L + alpha_L(i)*Gs_rs(i)
+            G_R = G_R + alpha_R(i)*Gs_rs(i)
+        end do
+
+        ! Elastic energy uses the undamaged modulus, so this loop precedes the damage scaling
+        $:GPU_LOOP(parallelism='[seq]')
+        do i = 1, eqn_idx%stress%end - eqn_idx%stress%beg + 1
+            ! Elastic contribution to energy if G large enough
+            if (G_L > verysmall) then
+                E_L = E_L + (tau_e_L(i)*tau_e_L(i))/(4._wp*G_L)
+                ! Double for shear stresses
+                if (any(eqn_idx%stress%beg - 1 + i == shear_indices)) then
+                    E_L = E_L + (tau_e_L(i)*tau_e_L(i))/(4._wp*G_L)
+                end if
             end if
-
-            $:GPU_PARALLEL_LOOP(collapse=3)
-            do l = is3%beg, is3%end
-                do j = is1%beg, is1%end
-                    do k = is2%beg, is2%end
-                        flux_src_vf(eqn_idx%adv%beg)%sf(k, j, l) = flux_src_rsx_vf(k, j, l, eqn_idx%adv%beg)
-                    end do
-                end do
-            end do
-            $:END_GPU_PARALLEL_LOOP()
-
-            if (riemann_solver == riemann_solver_hll .or. riemann_solver == riemann_solver_hlld) then
-                $:GPU_PARALLEL_LOOP(collapse=4)
-                do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
-                    do l = is3%beg, is3%end
-                        do j = is1%beg, is1%end
-                            do k = is2%beg, is2%end
-                                flux_src_vf(i)%sf(k, j, l) = flux_src_rsx_vf(k, j, l, i)
-                            end do
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
+            if (G_R > verysmall) then
+                E_R = E_R + (tau_e_R(i)*tau_e_R(i))/(4._wp*G_R)
+                ! Double for shear stresses
+                if (any(eqn_idx%stress%beg - 1 + i == shear_indices)) then
+                    E_R = E_R + (tau_e_R(i)*tau_e_R(i))/(4._wp*G_R)
+                end if
             end if
-            ! Reshaping Outputted Data in z-direction
-        else if (norm_dir == 3) then
-            $:GPU_PARALLEL_LOOP(collapse=4)
-            do i = 1, sys_size
-                do j = is1%beg, is1%end
-                    do k = is2%beg, is2%end
-                        do l = is3%beg, is3%end
-                            flux_vf(i)%sf(l, k, j) = flux_rsx_vf(l, k, j, i)
-                        end do
-                    end do
-                end do
-            end do
-            $:END_GPU_PARALLEL_LOOP()
-            if (grid_geometry == 3) then
-                $:GPU_PARALLEL_LOOP(collapse=4)
-                do i = 1, sys_size
-                    do j = is1%beg, is1%end
-                        do k = is2%beg, is2%end
-                            do l = is3%beg, is3%end
-                                flux_gsrc_vf(i)%sf(l, k, j) = flux_gsrc_rsx_vf(l, k, j, i)
-                            end do
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-            end if
+        end do
 
-            $:GPU_PARALLEL_LOOP(collapse=3)
-            do j = is1%beg, is1%end
-                do k = is2%beg, is2%end
-                    do l = is3%beg, is3%end
-                        flux_src_vf(eqn_idx%adv%beg)%sf(l, k, j) = flux_src_rsx_vf(l, k, j, eqn_idx%adv%beg)
-                    end do
-                end do
-            end do
-            $:END_GPU_PARALLEL_LOOP()
-
-            if (riemann_solver == riemann_solver_hll .or. riemann_solver == riemann_solver_hlld) then
-                $:GPU_PARALLEL_LOOP(collapse=4)
-                do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
-                    do j = is1%beg, is1%end
-                        do k = is2%beg, is2%end
-                            do l = is3%beg, is3%end
-                                flux_src_vf(i)%sf(l, k, j) = flux_src_rsx_vf(l, k, j, i)
-                            end do
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-            end if
-        else if (norm_dir == 1) then
-            $:GPU_PARALLEL_LOOP(collapse=4)
-            do i = 1, sys_size
-                do l = is3%beg, is3%end
-                    do k = is2%beg, is2%end
-                        do j = is1%beg, is1%end
-                            flux_vf(i)%sf(j, k, l) = flux_rsx_vf(j, k, l, i)
-                        end do
-                    end do
-                end do
-            end do
-            $:END_GPU_PARALLEL_LOOP()
-
-            $:GPU_PARALLEL_LOOP(collapse=3)
-            do l = is3%beg, is3%end
-                do k = is2%beg, is2%end
-                    do j = is1%beg, is1%end
-                        flux_src_vf(eqn_idx%adv%beg)%sf(j, k, l) = flux_src_rsx_vf(j, k, l, eqn_idx%adv%beg)
-                    end do
-                end do
-            end do
-            $:END_GPU_PARALLEL_LOOP()
-
-            if (riemann_solver == riemann_solver_hll .or. riemann_solver == riemann_solver_hlld) then
-                $:GPU_PARALLEL_LOOP(collapse=4)
-                do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
-                    do l = is3%beg, is3%end
-                        do k = is2%beg, is2%end
-                            do j = is1%beg, is1%end
-                                flux_src_vf(i)%sf(j, k, l) = flux_src_rsx_vf(j, k, l, i)
-                            end do
-                        end do
-                    end do
-                end do
-                $:END_GPU_PARALLEL_LOOP()
-            end if
+        ! Damage scaling applies only to the returned moduli (used for wave speeds)
+        if (cont_damage) then
+            G_L = G_L*max((1._wp - damage_L), 0._wp)
+            G_R = G_R*max((1._wp - damage_R), 0._wp)
         end if
 
-    end subroutine s_finalize_riemann_solver
+    end subroutine s_compute_hypoelastic_interface_energy
 
-end module m_riemann_state
+    !> Compute the advective part of the HLLC star-state momentum flux in the wave-normal direction (pressure excluded), used to
+    !! assemble the geometrical source flux of the cylindrical and azimuthal sweeps.
+    function f_compute_hllc_star_momentum_flux(rho_L, rho_R, vel_L_norm, vel_R_norm, s_M, s_P, s_S, xi_L, xi_R, xi_M, xi_P, &
+        & dir_flg_norm) result(flux_mom)
+
+        $:GPU_ROUTINE(function_name='f_compute_hllc_star_momentum_flux', parallelism='[seq]', cray_inline=True)
+
+        real(wp), intent(in) :: rho_L, rho_R            !< Left and right densities
+        real(wp), intent(in) :: vel_L_norm, vel_R_norm  !< Left and right wave-normal velocities
+        real(wp), intent(in) :: s_M, s_P, s_S           !< Clamped left/right and contact wave speeds
+        real(wp), intent(in) :: xi_L, xi_R, xi_M, xi_P  !< Star-state compression factors and upwind selectors
+        real(wp), intent(in) :: dir_flg_norm            !< Direction flag of the wave-normal direction
+        real(wp)             :: flux_mom
+
+        flux_mom = xi_M*(rho_L*(vel_L_norm*vel_L_norm + s_M*(xi_L*(dir_flg_norm*s_S + (1._wp - dir_flg_norm)*vel_L_norm) &
+                         & - vel_L_norm))) + xi_P*(rho_R*(vel_R_norm*vel_R_norm + s_P*(xi_R*(dir_flg_norm*s_S + (1._wp &
+                         & - dir_flg_norm)*vel_R_norm) - vel_R_norm)))
+
+    end function f_compute_hllc_star_momentum_flux
+
+    !> Reshape and copy the Riemann-solver flux buffers back to the physical-space output arrays for the selected sweep direction,
+    !! finalizing the Riemann solve. Two variants are emitted from one template so the shared unpermute logic cannot drift apart:
+    !! the plain routine also copies the advection flux_src set and the grid_geometry==3 z-sweep geometric source flux, while the
+    !! _hatR variant unpermutes the hat_R-anchored flux_hatR_rs* set of the fused dual-pass HLLD solve (called between the two RHS
+    !! assemblies) and is a strict subset: flux_src is anchor-independent (already finalized with the hat_L set) and its geometric
+    !! source flux only exists for the axisymmetric y-sweep.
+    #:for SUFFIX in ['', '_hatR']
+        #:set INFIX = 'hatR_' if SUFFIX else ''
+        #:if SUFFIX == ''
+            subroutine s_finalize_riemann_solver(flux_vf, flux_src_vf, flux_gsrc_vf, norm_dir)
+
+                type(scalar_field), dimension(sys_size), intent(inout) :: flux_vf, flux_src_vf, flux_gsrc_vf
+
+            #:else
+                subroutine s_finalize_riemann_solver_hatR(flux_vf, flux_gsrc_vf, norm_dir)
+
+                    type(scalar_field), dimension(sys_size), intent(inout) :: flux_vf, flux_gsrc_vf
+
+                #:endif
+                integer, intent(in) :: norm_dir
+                integer             :: i, j, k, l  !< Generic loop iterators
+                ! Reshaping Outputted Data in y-direction
+
+                if (norm_dir == 2) then
+                    $:GPU_PARALLEL_LOOP(collapse=4)
+                    do i = 1, sys_size
+                        do l = is3%beg, is3%end
+                            do j = is1%beg, is1%end
+                                do k = is2%beg, is2%end
+                                    flux_vf(i)%sf(k, j, l) = flux_${INFIX}$rsx_vf(k, j, l, i)
+                                end do
+                            end do
+                        end do
+                    end do
+                    $:END_GPU_PARALLEL_LOOP()
+
+                    if (cyl_coord) then
+                        $:GPU_PARALLEL_LOOP(collapse=4)
+                        do i = 1, sys_size
+                            do l = is3%beg, is3%end
+                                do j = is1%beg, is1%end
+                                    do k = is2%beg, is2%end
+                                        flux_gsrc_vf(i)%sf(k, j, l) = flux_gsrc_${INFIX}$rsx_vf(k, j, l, i)
+                                    end do
+                                end do
+                            end do
+                        end do
+                        $:END_GPU_PARALLEL_LOOP()
+                    end if
+
+                    #:if SUFFIX == ''
+                        $:GPU_PARALLEL_LOOP(collapse=3)
+                        do l = is3%beg, is3%end
+                            do j = is1%beg, is1%end
+                                do k = is2%beg, is2%end
+                                    flux_src_vf(eqn_idx%adv%beg)%sf(k, j, l) = flux_src_rsx_vf(k, j, l, eqn_idx%adv%beg)
+                                end do
+                            end do
+                        end do
+                        $:END_GPU_PARALLEL_LOOP()
+
+                        ! Copy the per-fluid flux_src entries only for the alpha-interface representation. HLLD
+                        ! (adv_src_mode_none) writes only the adv%beg row, so its per-fluid entries are never
+                        ! initialized and must not be copied out; nothing consumes them in that mode.
+                        if (adv_src_mode == adv_src_mode_alpha_iface) then
+                            $:GPU_PARALLEL_LOOP(collapse=4)
+                            do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
+                                do l = is3%beg, is3%end
+                                    do j = is1%beg, is1%end
+                                        do k = is2%beg, is2%end
+                                            flux_src_vf(i)%sf(k, j, l) = flux_src_rsx_vf(k, j, l, i)
+                                        end do
+                                    end do
+                                end do
+                            end do
+                            $:END_GPU_PARALLEL_LOOP()
+                        end if
+                    #:endif
+                    ! Reshaping Outputted Data in z-direction
+                else if (norm_dir == 3) then
+                    $:GPU_PARALLEL_LOOP(collapse=4)
+                    do i = 1, sys_size
+                        do j = is1%beg, is1%end
+                            do k = is2%beg, is2%end
+                                do l = is3%beg, is3%end
+                                    flux_vf(i)%sf(l, k, j) = flux_${INFIX}$rsx_vf(l, k, j, i)
+                                end do
+                            end do
+                        end do
+                    end do
+                    $:END_GPU_PARALLEL_LOOP()
+                    #:if SUFFIX == ''
+                        if (grid_geometry == 3) then
+                            $:GPU_PARALLEL_LOOP(collapse=4)
+                            do i = 1, sys_size
+                                do j = is1%beg, is1%end
+                                    do k = is2%beg, is2%end
+                                        do l = is3%beg, is3%end
+                                            flux_gsrc_vf(i)%sf(l, k, j) = flux_gsrc_rsx_vf(l, k, j, i)
+                                        end do
+                                    end do
+                                end do
+                            end do
+                            $:END_GPU_PARALLEL_LOOP()
+                        end if
+
+                        $:GPU_PARALLEL_LOOP(collapse=3)
+                        do j = is1%beg, is1%end
+                            do k = is2%beg, is2%end
+                                do l = is3%beg, is3%end
+                                    flux_src_vf(eqn_idx%adv%beg)%sf(l, k, j) = flux_src_rsx_vf(l, k, j, eqn_idx%adv%beg)
+                                end do
+                            end do
+                        end do
+                        $:END_GPU_PARALLEL_LOOP()
+
+                        ! Copy the per-fluid flux_src entries only for the alpha-interface representation. HLLD
+                        ! (adv_src_mode_none) writes only the adv%beg row, so its per-fluid entries are never
+                        ! initialized and must not be copied out; nothing consumes them in that mode.
+                        if (adv_src_mode == adv_src_mode_alpha_iface) then
+                            $:GPU_PARALLEL_LOOP(collapse=4)
+                            do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
+                                do j = is1%beg, is1%end
+                                    do k = is2%beg, is2%end
+                                        do l = is3%beg, is3%end
+                                            flux_src_vf(i)%sf(l, k, j) = flux_src_rsx_vf(l, k, j, i)
+                                        end do
+                                    end do
+                                end do
+                            end do
+                            $:END_GPU_PARALLEL_LOOP()
+                        end if
+                    #:endif
+                else if (norm_dir == 1) then
+                    $:GPU_PARALLEL_LOOP(collapse=4)
+                    do i = 1, sys_size
+                        do l = is3%beg, is3%end
+                            do k = is2%beg, is2%end
+                                do j = is1%beg, is1%end
+                                    flux_vf(i)%sf(j, k, l) = flux_${INFIX}$rsx_vf(j, k, l, i)
+                                end do
+                            end do
+                        end do
+                    end do
+                    $:END_GPU_PARALLEL_LOOP()
+
+                    #:if SUFFIX == ''
+                        $:GPU_PARALLEL_LOOP(collapse=3)
+                        do l = is3%beg, is3%end
+                            do k = is2%beg, is2%end
+                                do j = is1%beg, is1%end
+                                    flux_src_vf(eqn_idx%adv%beg)%sf(j, k, l) = flux_src_rsx_vf(j, k, l, eqn_idx%adv%beg)
+                                end do
+                            end do
+                        end do
+                        $:END_GPU_PARALLEL_LOOP()
+
+                        ! Copy the per-fluid flux_src entries only for the alpha-interface representation. HLLD
+                        ! (adv_src_mode_none) writes only the adv%beg row, so its per-fluid entries are never
+                        ! initialized and must not be copied out; nothing consumes them in that mode.
+                        if (adv_src_mode == adv_src_mode_alpha_iface) then
+                            $:GPU_PARALLEL_LOOP(collapse=4)
+                            do i = eqn_idx%adv%beg + 1, eqn_idx%adv%end
+                                do l = is3%beg, is3%end
+                                    do k = is2%beg, is2%end
+                                        do j = is1%beg, is1%end
+                                            flux_src_vf(i)%sf(j, k, l) = flux_src_rsx_vf(j, k, l, i)
+                                        end do
+                                    end do
+                                end do
+                            end do
+                            $:END_GPU_PARALLEL_LOOP()
+                        end if
+                    #:endif
+                end if
+
+            end subroutine s_finalize_riemann_solver${SUFFIX}$
+        #:endfor
+    end module m_riemann_state

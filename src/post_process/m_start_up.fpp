@@ -17,6 +17,7 @@ module m_start_up
     use m_boundary_common
     use m_boundary_io
     use m_variables_conversion
+    use m_eos
     use m_data_input
     use m_data_output
     use m_derived_variables
@@ -26,7 +27,7 @@ module m_start_up
     use m_checker
     use m_thermochem, only: num_species, species_names
     use m_finite_differences
-    use m_constants, only: model_eqns_gamma_law, model_eqns_5eq, model_eqns_6eq, model_eqns_4eq
+    use m_constants, only: model_eqns_gamma_law, model_eqns_5eq, model_eqns_6eq, format_silo
     use m_chemistry
 
 #ifdef MFC_MPI
@@ -120,7 +121,7 @@ contains
             call s_mpi_abort('Unsupported choice for the value of ' // 'case_dir. Exiting.')
         end if
 
-        call s_check_inputs_common()
+        call s_check_inputs_common(check_total_cells=.true., n_global=nGlobal)
         call s_check_inputs()
 
     end subroutine s_check_input_file
@@ -138,27 +139,37 @@ contains
                 eta_hh = int(eta_sec)/3600
                 eta_mm = mod(int(eta_sec), 3600)/60
                 eta_ss = mod(int(eta_sec), 60)
-                print '(" [", I3, "%]  Saving ", I8, " of ", I0, " Time Avg = ", ES16.6,  " Time/step = ", ES12.6, " ETA (HH:MM:SS)  = ", I0, ":", I2.2, ":", I2.2)', &
-                    & int(ceiling(100._wp*(real(t_step - n_start)/(n_save)))), t_step, n_save, wall_time_avg, wall_time, eta_hh, &
+                print '(" [", I3, "%] Saving ", I0, " of ", I0, " t/step ", ES9.2, "s (avg ", ES9.2, "s) ETA ", I0, ":", I2.2, ":", I2.2)', &
+                    & int(ceiling(100._wp*(real(t_step - n_start)/(n_save)))), t_step, n_save, wall_time, wall_time_avg, eta_hh, &
                     & eta_mm, eta_ss
             else
                 eta_sec = wall_time_avg*real((t_step_stop - t_step)/t_step_save, wp)
                 eta_hh = int(eta_sec)/3600
                 eta_mm = mod(int(eta_sec), 3600)/60
                 eta_ss = mod(int(eta_sec), 60)
-                print '(" [", I3, "%]  Saving ", I8, " of ", I0, " @ t_step = ", I8, " Time Avg = ", ES16.6,  " Time/step = ", ES12.6, " ETA (HH:MM:SS) = ", I0, ":", I2.2, ":", I2.2)', &
+                print '(" [", I3, "%] Saving ", I0, " of ", I0, " (t_step ", I0, ") t/step ", ES9.2, "s (avg ", ES9.2, "s) ETA ", I0, ":", I2.2, ":", I2.2)', &
                     & int(ceiling(100._wp*(real(t_step - t_step_start)/(t_step_stop - t_step_start + 1)))), &
-                    & (t_step - t_step_start)/t_step_save + 1, (t_step_stop - t_step_start)/t_step_save + 1, t_step, &
-                    & wall_time_avg, wall_time, eta_hh, eta_mm, eta_ss
+                    & (t_step - t_step_start)/t_step_save + 1, (t_step_stop - t_step_start)/t_step_save + 1, t_step, wall_time, &
+                    & wall_time_avg, eta_hh, eta_mm, eta_ss
             end if
         end if
 
         call s_read_data_files(t_step)
 
-        if (chemistry) call s_compute_q_T_sf(q_T_sf, q_cons_vf, idwbuff)
+        ! seed the chemistry temperature over the INTERIOR only (mirrors the simulation,
+        ! m_start_up): the ghost q_cons is unread at this point, so a ghost-inclusive sweep
+        ! would Newton-iterate on garbage (NaN under NaN-init builds) at rank seams and
+        ! physical boundaries; s_populate_variables_buffers below extends q_T into the ghosts
+        if (chemistry) call s_compute_q_T_sf(q_T_sf, q_cons_vf, idwint)
 
         if (buff_size > 0) then
-            call s_populate_grid_variables_buffers()
+            if (n == 0) then
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, offset_x, offset_y, offset_z)
+            else if (p == 0) then
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, offset_x, offset_y, offset_z, y_cb, y_cc, dy)
+            else
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, offset_x, offset_y, offset_z, y_cb, y_cc, dy, z_cb, z_cc, dz)
+            end if
             call s_populate_variables_buffers(bc_type, q_cons_vf, q_T_sf=q_T_sf)
         end if
 
@@ -167,20 +178,22 @@ contains
     end subroutine s_perform_time_step
 
     !> Derive requested flow quantities from primitive variables and write them to the formatted database files.
-    impure subroutine s_save_data(t_step, varname, pres, c, H)
+    impure subroutine s_save_data(t_step, varname, pres, c)
 
         integer, intent(inout)                 :: t_step
         character(LEN=name_len), intent(inout) :: varname
-        real(wp), intent(inout)                :: pres, c, H
+        real(wp), intent(inout)                :: pres, c
 
         real(wp), dimension(-offset_x%beg:m + offset_x%end,-offset_y%beg:n + offset_y%end, &
              & -offset_z%beg:p + offset_z%end) :: liutex_mag
         real(wp), dimension(-offset_x%beg:m + offset_x%end,-offset_y%beg:n + offset_y%end,-offset_z%beg:p + offset_z%end, &
              & 3) :: liutex_axis
-        integer       :: i, j, k, l, kx, ky, kz, kf, j_glb, k_glb, l_glb
-        character(50) :: filename
-        logical       :: file_exists
-        integer       :: x_beg, x_end, y_beg, y_end, z_beg, z_end
+        integer                         :: i, j, k, l, kx, ky, kz, kf, j_glb, k_glb, l_glb
+        character(50)                   :: filename
+        logical                         :: file_exists
+        real(wp), dimension(num_fluids) :: alpha_rho
+        real(wp)                        :: T
+        integer                         :: x_beg, x_end, y_beg, y_end, z_beg, z_end
 
         if (output_partial_domain) then
             call s_define_output_region
@@ -225,14 +238,10 @@ contains
             call s_compute_finite_difference_coefficients(p, z_cc, fd%fd_coeff_z, buff_size, fd_number, fd_order, offset_z)
         end if
 
-        if ((model_eqns == model_eqns_5eq) .or. (model_eqns == model_eqns_6eq) .or. (model_eqns == model_eqns_4eq)) then
+        if ((model_eqns == model_eqns_5eq) .or. (model_eqns == model_eqns_6eq)) then
             do i = 1, num_fluids
                 if (alpha_rho_wrt(i) .or. (cons_vars_wrt .or. prim_vars_wrt)) then
-                    if (model_eqns /= model_eqns_4eq) then
-                        write (varname, '(A,I0)') 'alpha_rho', i
-                    else
-                        write (varname, '(A,I0)') 'rho', i
-                    end if
+                    write (varname, '(A,I0)') 'alpha_rho', i
                     call s_write_field(varname, t_step, q_cons_vf(i), x_beg, x_end, y_beg, y_end, z_beg, z_end)
                 end if
             end do
@@ -438,7 +447,7 @@ contains
             end do
         end if
 
-        if (elasticity) then
+        if (hypoelasticity) then
             do i = 1, eqn_idx%stress%end - eqn_idx%stress%beg + 1
                 if (prim_vars_wrt) then
                     write (varname, '(A,I0)') 'tau', i
@@ -448,18 +457,9 @@ contains
             end do
         end if
 
-        if (hyperelasticity) then
-            do i = 1, eqn_idx%xi%end - eqn_idx%xi%beg + 1
-                if (prim_vars_wrt) then
-                    write (varname, '(A,I0)') 'xi', i
-                    call s_write_field(varname, t_step, q_prim_vf(i - 1 + eqn_idx%xi%beg), x_beg, x_end, y_beg, y_end, z_beg, z_end)
-                end if
-            end do
-        end if
-
         if (cont_damage) then
             write (varname, '(A)') 'damage_state'
-            call s_write_field(varname, t_step, q_cons_vf(eqn_idx%damage), x_beg, x_end, y_beg, y_end, z_beg, z_end)
+            call s_write_field(varname, t_step, q_prim_vf(eqn_idx%damage), x_beg, x_end, y_beg, y_end, z_beg, z_end)
         end if
 
         if (hyper_cleaning) then
@@ -530,14 +530,13 @@ contains
                     do i = -offset_x%beg, m + offset_x%end
                         do l = 1, eqn_idx%adv%end - eqn_idx%E
                             adv(l) = q_prim_vf(eqn_idx%E + l)%sf(i, j, k)
+                            alpha_rho(l) = q_prim_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, k)
                         end do
 
                         pres = q_prim_vf(eqn_idx%E)%sf(i, j, k)
 
-                        H = ((gamma_sf(i, j, k) + 1._wp)*pres + pi_inf_sf(i, j, k) + qv_sf(i, j, k))/rho_sf(i, j, k)
-
-                        call s_compute_speed_of_sound(pres, rho_sf(i, j, k), gamma_sf(i, j, k), pi_inf_sf(i, j, k), H, adv, &
-                                                      & 0._wp, 0._wp, c, qv_sf(i, j, k))
+                        call s_compute_speed_of_sound(pres, rho_sf(i, j, k), gamma_sf(i, j, k), pi_inf_sf(i, j, k), adv, c, &
+                                                      & alpha_rho)
 
                         out%q_sf(i, j, k) = c
                     end do
@@ -546,6 +545,23 @@ contains
 
             write (varname, '(A)') 'c'
             call s_write_field(varname, t_step)
+        end if
+
+        if (T_wrt) then
+            do l = 1, num_fluids
+                do k = -offset_z%beg, p + offset_z%end
+                    do j = -offset_y%beg, n + offset_y%end
+                        do i = -offset_x%beg, m + offset_x%end
+                            call s_phase_temperature(q_prim_vf(eqn_idx%cont%beg + l - 1)%sf(i, j, &
+                                                     & k)/max(q_prim_vf(eqn_idx%E + l)%sf(i, j, k), sgm_eps), &
+                                                     & q_prim_vf(eqn_idx%E)%sf(i, j, k), l, T)
+                            out%q_sf(i, j, k) = T
+                        end do
+                    end do
+                end do
+                write (varname, '(A,I0)') 'T', l
+                call s_write_field(varname, t_step)
+            end do
         end if
 
         do i = 1, 3
@@ -774,10 +790,11 @@ contains
         end if
         if (num_procs > 1) then
             call s_initialize_mpi_proxy_module()
-            call s_initialize_mpi_common_module()
+            call s_initialize_mpi_common_module(exchange_all_chemistry_temperatures_in=.true., use_rdma_transport_in=.false.)
         end if
         call s_initialize_boundary_common_module()
-        call s_initialize_variables_conversion_module()
+        call s_initialize_eos_module()
+        call s_initialize_variables_conversion_module(store_mixture_fields=.true., lagrange_beta_index=beta_idx)
         call s_initialize_data_input_module()
         call s_initialize_derived_variables_module()
         call s_initialize_data_output_module()
@@ -922,6 +939,8 @@ contains
     !> Set up the MPI environment, read and broadcast user inputs, and decompose the computational domain.
     impure subroutine s_initialize_mpi_domain
 
+        type(int_bounds_info), dimension(3) :: output_offsets
+
         num_dims = 1 + min(1, n) + min(1, p)
 
         call s_mpi_initialize()
@@ -935,9 +954,22 @@ contains
         end if
 
         call s_mpi_bcast_user_inputs()
+
+        ! Save original BCs before decomposition overwrites them with MPI neighbor ranks
+        ib_bc_x = bc_x
+        ib_bc_y = bc_y
+        ib_bc_z = bc_z
+
         call s_initialize_parallel_io()
-        call s_mpi_decompose_computational_domain()
+        output_offsets = (/offset_x, offset_y, offset_z/)
+        call s_mpi_decompose_computational_domain(write_silo_ghost_offsets=format == format_silo, adjust_local_domains=.false., &
+            & output_offsets=output_offsets)
+        offset_x = output_offsets(1)
+        offset_y = output_offsets(2)
+        offset_z = output_offsets(3)
         call s_check_inputs_fft()
+
+        bc = bc_xyz_info(bc_x, bc_y, bc_z)
 
     end subroutine s_initialize_mpi_domain
 
@@ -972,6 +1004,7 @@ contains
         call s_finalize_derived_variables_module()
         call s_finalize_data_input_module()
         call s_finalize_variables_conversion_module()
+        call s_finalize_eos_module()
         if (num_procs > 1) then
             call s_finalize_mpi_proxy_module()
             call s_finalize_mpi_common_module()

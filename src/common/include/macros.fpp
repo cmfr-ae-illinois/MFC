@@ -14,9 +14,8 @@
 
 ! Caution: This macro requires the use of a binding script to set CUDA_VISIBLE_DEVICES, such that we have one GPU device per MPI
 ! rank. That's because for both cudaMemAdvise (preferred location) and cudaMemPrefetchAsync we use location = device_id = 0. For an
-! example see misc/nvidia_uvm/bind.sh. NVIDIA unified memory page placement hint
+! example see misc/nvidia_uvm/bind.sh.
 #:def PREFER_GPU(*args)
-#ifdef MFC_SIMULATION
 #ifdef __NVCOMPILER_GPU_UNIFIED_MEM
     block
         ! NVIDIA CUDA Fortran 25.3+: uses submodules (cuda_runtime_api, gpu_reductions, sort) See
@@ -30,28 +29,24 @@
 
         if (nv_uvm_pref_gpu) then
             #:for arg in args
-                ! print*, "Moving ${arg}$ to GPU => ", SHAPE(${arg}$) set preferred location GPU
+                ! set preferred location GPU
                 istat = cudaMemAdvise(c_devloc(${arg}$), SIZEOF(${arg}$), cudaMemAdviseSetPreferredLocation, 0)
                 if (istat /= cudaSuccess) then
                     write (*, "('Error code: ',I0, ': ')") istat
-                    ! write(*,*) cudaGetErrorString(istat)
                 end if
                 ! set accessed by CPU
                 istat = cudaMemAdvise(c_devloc(${arg}$), SIZEOF(${arg}$), cudaMemAdviseSetAccessedBy, cudaCpuDeviceId)
                 if (istat /= cudaSuccess) then
                     write (*, "('Error code: ',I0, ': ')") istat
-                    ! write(*,*) cudaGetErrorString(istat)
                 end if
                 ! prefetch to GPU - physically populate memory pages
                 istat = cudaMemPrefetchAsync(c_devloc(${arg}$), SIZEOF(${arg}$), 0, 0)
                 if (istat /= cudaSuccess) then
                     write (*, "('Error code: ',I0, ': ')") istat
-                    ! write(*,*) cudaGetErrorString(istat)
                 end if
             #:endfor
         end if
     end block
-#endif
 #endif
 #:enddef
 

@@ -11,6 +11,7 @@ module m_start_up
     use m_global_parameters
     use m_mpi_proxy
     use m_mpi_common
+    use m_eos, only: s_initialize_eos_module, s_finalize_eos_module
     use m_variables_conversion
     use m_grid
     use m_initial_condition
@@ -28,6 +29,7 @@ module m_start_up
 
     use m_check_patches
     use m_check_ib_patches
+    use m_particle_cloud
     use m_helper
     use m_checker_common
     use m_checker
@@ -39,7 +41,8 @@ module m_start_up
     private
     public :: s_read_input_file, s_check_input_file, s_read_grid_data_files, s_read_ic_data_files, s_read_serial_grid_data_files, &
         & s_read_serial_ic_data_files, s_read_parallel_grid_data_files, s_read_parallel_ic_data_files, s_check_grid_data_files, &
-        & s_initialize_modules, s_initialize_mpi_domain, s_finalize_modules, s_apply_initial_condition, s_save_data, s_read_grid
+        & s_initialize_modules, s_initialize_mpi_domain, s_finalize_modules, s_apply_initial_condition, s_save_data, s_read_grid, &
+        & s_write_ib_state_0
 
     abstract interface
 
@@ -128,7 +131,7 @@ contains
             call s_mpi_abort('Unsupported choice for the value of case_dir.' // 'Exiting.')
         end if
 
-        call s_check_inputs_common()
+        call s_check_inputs_common(check_total_cells=.true., n_global=nGlobal)
         call s_check_inputs()
 
         call s_check_patches()
@@ -136,6 +139,27 @@ contains
         if (ib) call s_check_ib_patches()
 
     end subroutine s_check_input_file
+
+    !> @brief Generates the particle-cloud beds (if any) and writes the initial IB state file that simulation reads back at startup
+    !! (src/simulation/m_start_up.fpp:s_read_ib_restart_data). Must run after the domain is decomposed (s_initialize_mpi_domain) and
+    !! the grid is populated (s_read_grid). Under file_per_process every rank computes the same deterministic placement and keeps
+    !! only the IBs f_local_rank_owns_location says are its own; otherwise rank 0 alone generates and writes every IB.
+    impure subroutine s_write_ib_state_0()
+
+        type(ib_patch_parameters), allocatable :: particle_cloud_ibs(:)
+        integer                                :: num_particle_cloud_ibs
+        type(bounds_info), dimension(3)        :: glb_bounds
+
+        if (.not. ib) return
+        if (.not. file_per_process .and. proc_rank /= 0) return
+
+        glb_bounds = (/x_domain_glb, y_domain_glb, z_domain_glb/)
+
+        call s_generate_particle_clouds(glb_bounds, particle_cloud_ibs, num_particle_cloud_ibs)
+        call s_write_ib_state_0_file(glb_bounds, particle_cloud_ibs, num_particle_cloud_ibs)
+        deallocate (particle_cloud_ibs)
+
+    end subroutine s_write_ib_state_0
 
     !> The goal of this subroutine is to read in any preexisting grid data as well as based on the imported grid, complete the
     !! necessary global computational domain parameters.
@@ -171,8 +195,8 @@ contains
 
         x_cc(0:m) = (x_cb(0:m) + x_cb(-1:(m - 1)))/2._wp
 
-        dx = minval(x_cb(0:m) - x_cb(-1:m - 1))
-        if (num_procs > 1) call s_mpi_reduce_min(dx)
+        dx_min = minval(x_cb(0:m) - x_cb(-1:m - 1))
+        if (num_procs > 1) call s_mpi_reduce_min(dx_min)
 
         x_domain%beg = x_cb(-1)
         x_domain%end = x_cb(m)
@@ -191,8 +215,8 @@ contains
 
             y_cc(0:n) = (y_cb(0:n) + y_cb(-1:(n - 1)))/2._wp
 
-            dy = minval(y_cb(0:n) - y_cb(-1:n - 1))
-            if (num_procs > 1) call s_mpi_reduce_min(dy)
+            dy_min = minval(y_cb(0:n) - y_cb(-1:n - 1))
+            if (num_procs > 1) call s_mpi_reduce_min(dy_min)
 
             y_domain%beg = y_cb(-1)
             y_domain%end = y_cb(n)
@@ -211,8 +235,8 @@ contains
 
                 z_cc(0:p) = (z_cb(0:p) + z_cb(-1:(p - 1)))/2._wp
 
-                dz = minval(z_cb(0:p) - z_cb(-1:p - 1))
-                if (num_procs > 1) call s_mpi_reduce_min(dz)
+                dz_min = minval(z_cb(0:p) - z_cb(-1:p - 1))
+                if (num_procs > 1) call s_mpi_reduce_min(dz_min)
 
                 z_domain%beg = z_cb(-1)
                 z_domain%end = z_cb(p)
@@ -336,6 +360,7 @@ contains
         if (file_exist) then
             data_size = m_glb + 2
             call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
             call MPI_FILE_READ_ALL(ifile, x_cb_glb, data_size, mpi_p, status, ierr)
             call MPI_FILE_CLOSE(ifile, ierr)
         else
@@ -344,8 +369,8 @@ contains
 
         x_cb(-1:m) = x_cb_glb((start_idx(1) - 1):(start_idx(1) + m))
         x_cc(0:m) = (x_cb(0:m) + x_cb(-1:(m - 1)))/2._wp
-        dx = minval(x_cb(0:m) - x_cb(-1:(m - 1)))
-        if (num_procs > 1) call s_mpi_reduce_min(dx)
+        dx_min = minval(x_cb(0:m) - x_cb(-1:(m - 1)))
+        if (num_procs > 1) call s_mpi_reduce_min(dx_min)
         x_domain%beg = x_cb(-1)
         x_domain%end = x_cb(m)
 
@@ -356,6 +381,7 @@ contains
             if (file_exist) then
                 data_size = n_glb + 2
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
                 call MPI_FILE_READ_ALL(ifile, y_cb_glb, data_size, mpi_p, status, ierr)
                 call MPI_FILE_CLOSE(ifile, ierr)
             else
@@ -364,8 +390,8 @@ contains
 
             y_cb(-1:n) = y_cb_glb((start_idx(2) - 1):(start_idx(2) + n))
             y_cc(0:n) = (y_cb(0:n) + y_cb(-1:(n - 1)))/2._wp
-            dy = minval(y_cb(0:n) - y_cb(-1:(n - 1)))
-            if (num_procs > 1) call s_mpi_reduce_min(dy)
+            dy_min = minval(y_cb(0:n) - y_cb(-1:(n - 1)))
+            if (num_procs > 1) call s_mpi_reduce_min(dy_min)
             y_domain%beg = y_cb(-1)
             y_domain%end = y_cb(n)
 
@@ -376,6 +402,7 @@ contains
                 if (file_exist) then
                     data_size = p_glb + 2
                     call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                    call s_check_mpi_file_open(ierr, file_loc)
                     call MPI_FILE_READ_ALL(ifile, z_cb_glb, data_size, mpi_p, status, ierr)
                     call MPI_FILE_CLOSE(ifile, ierr)
                 else
@@ -384,8 +411,8 @@ contains
 
                 z_cb(-1:p) = z_cb_glb((start_idx(3) - 1):(start_idx(3) + p))
                 z_cc(0:p) = (z_cb(0:p) + z_cb(-1:(p - 1)))/2._wp
-                dz = minval(z_cb(0:p) - z_cb(-1:(p - 1)))
-                if (num_procs > 1) call s_mpi_reduce_min(dz)
+                dz_min = minval(z_cb(0:p) - z_cb(-1:(p - 1)))
+                if (num_procs > 1) call s_mpi_reduce_min(dz_min)
                 z_domain%beg = z_cb(-1)
                 z_domain%end = z_cb(p)
             end if
@@ -423,8 +450,9 @@ contains
 
         if (file_exist) then
             call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
 
-            call s_initialize_mpi_data(q_cons_vf_in)
+            call s_initialize_mpi_data(q_cons_vf_in, qbmm_pb=pb, qbmm_mv=mv)
 
             data_size = (m + 1)*(n + 1)*(p + 1)
 
@@ -476,8 +504,9 @@ contains
         if (bubbles_euler .or. bubbles_lagrange) then
             call s_initialize_bubbles_model()
         end if
-        call s_initialize_mpi_common_module()
+        call s_initialize_mpi_common_module(exchange_all_chemistry_temperatures_in=.false., use_rdma_transport_in=.false.)
         call s_initialize_data_output_module()
+        call s_initialize_eos_module()
         call s_initialize_variables_conversion_module()
         call s_initialize_grid_module()
         call s_initialize_initial_condition_module()
@@ -608,6 +637,8 @@ contains
     !> Initialize MPI, read and validate user inputs on rank 0, and decompose the computational domain.
     impure subroutine s_initialize_mpi_domain
 
+        type(bounds_info), dimension(3) :: local_domains
+
         call s_mpi_initialize()
 
         if (proc_rank == 0) then
@@ -621,6 +652,12 @@ contains
         ! Broadcasting the user inputs to all of the processors and performing the parallel computational domain decomposition.
         ! Neither procedure has to be carried out if pre-process is in fact not truly executed in parallel.
         call s_mpi_bcast_user_inputs()
+
+        ! Save original BCs before decomposition overwrites them with MPI neighbor ranks
+        ib_bc_x = bc_x
+        ib_bc_y = bc_y
+        ib_bc_z = bc_z
+
         call s_initialize_parallel_io()
 
         ! Save the global domain bounds before decomposition overwrites x/y/z_domain with each processor's local sub-domain bounds
@@ -628,7 +665,14 @@ contains
         y_domain_glb = y_domain
         z_domain_glb = z_domain
 
-        call s_mpi_decompose_computational_domain()
+        local_domains = (/x_domain, y_domain, z_domain/)
+        call s_mpi_decompose_computational_domain(write_silo_ghost_offsets=.false., adjust_local_domains= .not. old_grid, &
+            & local_domains=local_domains)
+        x_domain = local_domains(1)
+        y_domain = local_domains(2)
+        z_domain = local_domains(3)
+
+        bc = bc_xyz_info(bc_x, bc_y, bc_z)
 
     end subroutine s_initialize_mpi_domain
 
@@ -643,6 +687,7 @@ contains
         call s_finalize_mpi_common_module()
         call s_finalize_grid_module()
         call s_finalize_variables_conversion_module()
+        call s_finalize_eos_module()
         call s_finalize_data_output_module()
         call s_finalize_global_parameters_module()
         call s_finalize_assign_variables_module()

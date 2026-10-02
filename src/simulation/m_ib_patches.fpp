@@ -23,7 +23,7 @@ module m_ib_patches
     implicit none
 
     private; public :: s_apply_ib_patches, s_update_ib_rotation_matrix, s_instantiate_STL_models, s_decode_patch_periodicity, &
-        & s_encode_patch_periodicity, s_initialize_ib_airfoils, s_get_periodicities
+        & s_encode_patch_periodicity, s_initialize_ib_airfoils, s_get_periodicities, s_get_ib_bound
 
 contains
 
@@ -57,15 +57,15 @@ contains
                 do yp = yp_lower, yp_upper
                     do zp = zp_lower, zp_upper
                         do patch_id = 1, num_ibs
-                            center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg)
-                            center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg)
-                            center(3) = patch_ib(patch_id)%z_centroid + real(zp, wp)*(z_domain%end - z_domain%beg)
+                            center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(glb_bounds(1)%end - glb_bounds(1)%beg)
+                            center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(glb_bounds(2)%end - glb_bounds(2)%beg)
+                            center(3) = patch_ib(patch_id)%z_centroid + real(zp, wp)*(glb_bounds(3)%end - glb_bounds(3)%beg)
 
                             ! encode the periodicity information into the patch_id
                             call s_encode_patch_periodicity(patch_ib(patch_id)%gbl_patch_id, xp, yp, zp, encoded_patch_id)
 
                             ! find the indices to the left and right of the IB in i, j, k
-                            call get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
+                            call s_get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
 
                             ! skip patches whose bounding box does not overlap this rank's domain
                             if (ir < il .or. jr < jl .or. kr < kl) cycle
@@ -129,15 +129,15 @@ contains
             do xp = xp_lower, xp_upper
                 do yp = yp_lower, yp_upper
                     do patch_id = 1, num_ibs
-                        center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg)
-                        center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg)
+                        center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(glb_bounds(1)%end - glb_bounds(1)%beg)
+                        center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(glb_bounds(2)%end - glb_bounds(2)%beg)
                         center(3) = 0._wp
 
                         ! encode the periodicity information into the patch_id
                         call s_encode_patch_periodicity(patch_ib(patch_id)%gbl_patch_id, xp, yp, 0, encoded_patch_id)
 
                         ! find the indices to the left and right of the IB in i, j, k
-                        call get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
+                        call s_get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
 
                         ! skip patches whose bounding box does not overlap this rank's domain
                         if (ir < il .or. jr < jl) cycle
@@ -210,15 +210,15 @@ contains
                         $:GPU_PARALLEL_LOOP(private='[i, il, ir, j, jl, jr, k, kl, kr, xyz_local, length, radius, patch_id, &
                                             & airfoil_id, model_id, encoded_patch_id, center, eta]', copyin='[xp, yp, zp]')
                         do patch_id = 1, num_ibs
-                            center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg)
-                            center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg)
-                            center(3) = patch_ib(patch_id)%z_centroid + real(zp, wp)*(z_domain%end - z_domain%beg)
+                            center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(glb_bounds(1)%end - glb_bounds(1)%beg)
+                            center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(glb_bounds(2)%end - glb_bounds(2)%beg)
+                            center(3) = patch_ib(patch_id)%z_centroid + real(zp, wp)*(glb_bounds(3)%end - glb_bounds(3)%beg)
 
                             ! encode the periodicity information into the patch_id
                             call s_encode_patch_periodicity(patch_ib(patch_id)%gbl_patch_id, xp, yp, zp, encoded_patch_id)
 
                             ! find the indices to the left and right of the IB in i, j, k
-                            call get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
+                            call s_get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
 
                             do k = kl, kr
                                 do j = jl, jr
@@ -228,38 +228,53 @@ contains
                                         ! rotate the frame into the IB's coordinates
                                         xyz_local = matmul(patch_ib(patch_id)%rotation_matrix_inverse, xyz_local)
 
-                                        ! perform the interior check for the patch geometry of this IB
+                                        ! perform the interior check for the patch geometry of this IB. Writes to ib_markers use
+                                        ! an atomic max (not a plain assignment) because this loop is parallel over patch_id: the
+                                        ! soft-sphere collision model allows particles to physically interpenetrate by design, so
+                                        ! two different patches can both claim the same overlapping cell here. A plain write would
+                                        ! be a data race with a nondeterministic winner; the atomic max makes the higher
+                                        ! encoded_patch_id win consistently every time, regardless of thread scheduling.
                                         if (patch_ib(patch_id)%geometry == 8) then
                                             ! sphere geometry
                                             radius = patch_ib(patch_id)%radius
 
-                                            if (f_is_inside_sphere(xyz_local(1), xyz_local(2), xyz_local(3), &
-                                                & radius)) ib_markers%sf(i, j, k) = encoded_patch_id
+                                            if (f_is_inside_sphere(xyz_local(1), xyz_local(2), xyz_local(3), radius)) then
+                                                $:GPU_ATOMIC(atomic='update')
+                                                ib_markers%sf(i, j, k) = max(ib_markers%sf(i, j, k), encoded_patch_id)
+                                            end if
                                         else if (patch_ib(patch_id)%geometry == 9) then
                                             ! cuboid geometry
                                             length = [patch_ib(patch_id)%length_x, patch_ib(patch_id)%length_y, &
                                                                & patch_ib(patch_id)%length_z]
-                                            if (f_is_inside_cuboid(xyz_local(1), xyz_local(2), xyz_local(3), &
-                                                & length)) ib_markers%sf(i, j, k) = encoded_patch_id
+                                            if (f_is_inside_cuboid(xyz_local(1), xyz_local(2), xyz_local(3), length)) then
+                                                $:GPU_ATOMIC(atomic='update')
+                                                ib_markers%sf(i, j, k) = max(ib_markers%sf(i, j, k), encoded_patch_id)
+                                            end if
                                         else if (patch_ib(patch_id)%geometry == 10) then
                                             ! cylinder geometry
                                             radius = patch_ib(patch_id)%radius
                                             if (f_is_inside_cylinder(xyz_local(2), xyz_local(3), xyz_local(1), radius, &
-                                                & patch_ib(patch_id)%length_x)) ib_markers%sf(i, j, k) = encoded_patch_id
+                                                & patch_ib(patch_id)%length_x)) then
+                                                $:GPU_ATOMIC(atomic='update')
+                                                ib_markers%sf(i, j, k) = max(ib_markers%sf(i, j, k), encoded_patch_id)
+                                            end if
                                         else if (patch_ib(patch_id)%geometry == 11) then
                                             ! 3D airfoil geometry
                                             airfoil_id = patch_ib(patch_id)%airfoil_id
                                             xyz_local = xyz_local - patch_ib(patch_id)%centroid_offset
                                             if (f_is_inside_airfoil(xyz_local(1), xyz_local(2), xyz_local(3), &
-                                                & patch_ib(patch_id)%length_z, airfoil_id)) ib_markers%sf(i, j, &
-                                                & k) = encoded_patch_id
+                                                & patch_ib(patch_id)%length_z, airfoil_id)) then
+                                                $:GPU_ATOMIC(atomic='update')
+                                                ib_markers%sf(i, j, k) = max(ib_markers%sf(i, j, k), encoded_patch_id)
+                                            end if
                                         else if (patch_ib(patch_id)%geometry == 12) then
                                             ! STL model geometry
                                             xyz_local = xyz_local - patch_ib(patch_id)%centroid_offset
                                             model_id = patch_ib(patch_id)%model_id
                                             eta = f_model_is_inside(gpu_ntrs(model_id), model_id, xyz_local)
                                             if (eta > stl_models(model_id)%model_threshold) then
-                                                ib_markers%sf(i, j, k) = encoded_patch_id
+                                                $:GPU_ATOMIC(atomic='update')
+                                                ib_markers%sf(i, j, k) = max(ib_markers%sf(i, j, k), encoded_patch_id)
                                             end if
                                         end if
                                     end do
@@ -279,15 +294,15 @@ contains
                     $:GPU_PARALLEL_LOOP(private='[i, il, ir, j, jl, jr, xyz_local, length, radius, patch_id, airfoil_id, &
                                         & model_id, encoded_patch_id, center, eta]', copyin='[xp, yp]')
                     do patch_id = 1, num_ibs
-                        center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(x_domain%end - x_domain%beg)
-                        center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(y_domain%end - y_domain%beg)
+                        center(1) = patch_ib(patch_id)%x_centroid + real(xp, wp)*(glb_bounds(1)%end - glb_bounds(1)%beg)
+                        center(2) = patch_ib(patch_id)%y_centroid + real(yp, wp)*(glb_bounds(2)%end - glb_bounds(2)%beg)
                         center(3) = 0._wp
 
                         ! encode the periodicity information into the patch_id
                         call s_encode_patch_periodicity(patch_ib(patch_id)%gbl_patch_id, xp, yp, 0, encoded_patch_id)
 
                         ! find the indices to the left and right of the IB in i, j, k
-                        call get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
+                        call s_get_bounding_indices(patch_ib(patch_id), center, il, ir, jl, jr, kl, kr)
 
                         do j = jl, jr
                             do i = il, ir
@@ -296,36 +311,50 @@ contains
                                 ! rotate the frame into the IB's coordinates
                                 xyz_local = matmul(patch_ib(patch_id)%rotation_matrix_inverse, xyz_local)
 
-                                ! perform the interior check for the patch geometry of this IB
+                                ! perform the interior check for the patch geometry of this IB. Writes to ib_markers use an
+                                ! atomic max (not a plain assignment) because this loop is parallel over patch_id: the
+                                ! soft-sphere collision model allows particles to physically interpenetrate by design, so two
+                                ! different patches can both claim the same overlapping cell here. A plain write would be a data
+                                ! race with a nondeterministic winner; the atomic max makes the higher encoded_patch_id win
+                                ! consistently every time, regardless of thread scheduling.
                                 if (patch_ib(patch_id)%geometry == 2) then
                                     ! circular geometries
                                     radius = patch_ib(patch_id)%radius
-                                    if (f_is_inside_cylinder(xyz_local(1), xyz_local(2), 0._wp, radius, 0._wp)) ib_markers%sf(i, &
-                                        & j, 0) = encoded_patch_id
+                                    if (f_is_inside_cylinder(xyz_local(1), xyz_local(2), 0._wp, radius, 0._wp)) then
+                                        $:GPU_ATOMIC(atomic='update')
+                                        ib_markers%sf(i, j, 0) = max(ib_markers%sf(i, j, 0), encoded_patch_id)
+                                    end if
                                 else if (patch_ib(patch_id)%geometry == 3) then
                                     ! rectangular geometries
                                     length = [patch_ib(patch_id)%length_x, patch_ib(patch_id)%length_y, 0._wp]
-                                    if (f_is_inside_cuboid(xyz_local(1), xyz_local(2), xyz_local(3), length)) ib_markers%sf(i, j, &
-                                        & 0) = encoded_patch_id
+                                    if (f_is_inside_cuboid(xyz_local(1), xyz_local(2), xyz_local(3), length)) then
+                                        $:GPU_ATOMIC(atomic='update')
+                                        ib_markers%sf(i, j, 0) = max(ib_markers%sf(i, j, 0), encoded_patch_id)
+                                    end if
                                 else if (patch_ib(patch_id)%geometry == 4) then
                                     ! 2D airfoil geometry
                                     airfoil_id = patch_ib(patch_id)%airfoil_id
                                     xyz_local = xyz_local - patch_ib(patch_id)%centroid_offset
-                                    if (f_is_inside_airfoil(xyz_local(1), xyz_local(2), 0._wp, 0._wp, &
-                                        & airfoil_id)) ib_markers%sf(i, j, 0) = encoded_patch_id
+                                    if (f_is_inside_airfoil(xyz_local(1), xyz_local(2), 0._wp, 0._wp, airfoil_id)) then
+                                        $:GPU_ATOMIC(atomic='update')
+                                        ib_markers%sf(i, j, 0) = max(ib_markers%sf(i, j, 0), encoded_patch_id)
+                                    end if
                                 else if (patch_ib(patch_id)%geometry == 5) then
                                     ! STL model geometry
                                     xyz_local = xyz_local - patch_ib(patch_id)%centroid_offset
                                     model_id = patch_ib(patch_id)%model_id
                                     eta = f_model_is_inside(gpu_ntrs(model_id), model_id, xyz_local)
                                     if (eta > stl_models(model_id)%model_threshold) then
-                                        ib_markers%sf(i, j, 0) = encoded_patch_id
+                                        $:GPU_ATOMIC(atomic='update')
+                                        ib_markers%sf(i, j, 0) = max(ib_markers%sf(i, j, 0), encoded_patch_id)
                                     end if
                                 else if (patch_ib(patch_id)%geometry == 6) then
                                     ! ellipse geometry
                                     length = [patch_ib(patch_id)%length_x, patch_ib(patch_id)%length_y, 0._wp]
-                                    if (f_is_inside_ellipse(xyz_local(1), xyz_local(2), length)) ib_markers%sf(i, j, &
-                                        & 0) = encoded_patch_id
+                                    if (f_is_inside_ellipse(xyz_local(1), xyz_local(2), length)) then
+                                        $:GPU_ATOMIC(atomic='update')
+                                        ib_markers%sf(i, j, 0) = max(ib_markers%sf(i, j, 0), encoded_patch_id)
+                                    end if
                                 end if
                             end do
                         end do
@@ -341,10 +370,17 @@ contains
     !! and before s_apply_ib_patches or s_apply_levelset.
     subroutine s_initialize_ib_airfoils()
 
-        integer  :: i, j, airfoil_id
-        integer  :: Np, Np1, Np2
+        integer  :: i, j, airfoil_id, Np
         real(wp) :: ca_in, pa, ma, ta
-        real(wp) :: xc, xa, yc, dycdxc, yt, xu, yu, xl, yl, sin_c, cos_c
+        real(wp) :: xa, yc, dycdxc, yt, xu, yu, xl, yl, sin_c, cos_c
+        real(wp) :: edge(1:2)         !< segment vector from vertex 1 to vertex 2
+        real(wp) :: min_grid_spacing  !< smallest cell width across all ranks
+
+        if (.not. any(patch_ib(1:num_ibs)%geometry == 4 .or. patch_ib(1:num_ibs)%geometry == 11)) return
+
+        ! size the surface on the global minimum spacing so every rank builds the same airfoil
+        min_grid_spacing = min(dx_min, dy_min)
+        if (num_procs > 1) call s_mpi_allreduce_min(min(dx_min, dy_min), min_grid_spacing)
 
         do i = 1, num_ibs
             if (patch_ib(i)%geometry /= 4 .and. patch_ib(i)%geometry /= 11) cycle
@@ -355,30 +391,26 @@ contains
             ma = ib_airfoil(airfoil_id)%m
             ta = ib_airfoil(airfoil_id)%t
 
-            Np1 = int((pa*ca_in/dx(0))*20)
-            Np2 = int(((ca_in - pa*ca_in)/dx(0))*20)
-            Np = Np1 + Np2 + 1
+            Np = int(10._wp*ca_in/min_grid_spacing) + 1  ! 20 surface points per smallest cell
             ib_airfoil_grids(airfoil_id)%Np = Np
             $:GPU_UPDATE(device='[ib_airfoil_grids(airfoil_id)%Np]')
 
             if (.not. allocated(ib_airfoil_grids(airfoil_id)%upper)) then
-                @:ALLOCATE(ib_airfoil_grids(airfoil_id)%upper(1:Np))
-                @:ALLOCATE(ib_airfoil_grids(airfoil_id)%lower(1:Np))
+                @:ALLOCATE(ib_airfoil_grids(airfoil_id)%upper(1:Np - 1, 1:3, 1:2))
+                @:ALLOCATE(ib_airfoil_grids(airfoil_id)%lower(1:Np - 1, 1:3, 1:2))
 
-                ib_airfoil_grids(airfoil_id)%upper(1)%x = 0._wp
-                ib_airfoil_grids(airfoil_id)%upper(1)%y = 0._wp
-                ib_airfoil_grids(airfoil_id)%lower(1)%x = 0._wp
-                ib_airfoil_grids(airfoil_id)%lower(1)%y = 0._wp
+                ! segments run from the leading edge to the trailing edge
+                ib_airfoil_grids(airfoil_id)%upper(1, 1,:) = 0._wp
+                ib_airfoil_grids(airfoil_id)%lower(1, 1,:) = 0._wp
 
-                do j = 1, Np1 + Np2 - 1
-                    if (j <= Np1) then
-                        xc = j*(pa*ca_in/Np1)
-                        xa = xc/ca_in
+                do j = 1, Np - 2
+                    ! cosine spacing clusters points at the leading and trailing edges, Katz & Plotkin (2001)
+                    ! "Low-Speed Aerodynamics", 2nd ed., Cambridge University Press
+                    xa = 0.5_wp*(1._wp - cos(pi*real(j, wp)/real(Np - 1, wp)))
+                    if (xa <= pa) then
                         yc = (ma/pa**2)*(2*pa*xa - xa**2)
                         dycdxc = (2*ma/pa**2)*(pa - xa)
                     else
-                        xc = pa*ca_in + (j - Np1)*((ca_in - pa*ca_in)/Np2)
-                        xa = xc/ca_in
                         yc = (ma/(1 - pa)**2)*(1 - 2*pa + 2*pa*xa - xa**2)
                         dycdxc = (2*ma/(1 - pa)**2)*(pa - xa)
                     end if
@@ -392,16 +424,23 @@ contains
                     xl = (xa + yt*sin_c)*ca_in
                     yl = (yc - yt*cos_c)*ca_in
 
-                    ib_airfoil_grids(airfoil_id)%upper(j + 1)%x = xu
-                    ib_airfoil_grids(airfoil_id)%upper(j + 1)%y = yu
-                    ib_airfoil_grids(airfoil_id)%lower(j + 1)%x = xl
-                    ib_airfoil_grids(airfoil_id)%lower(j + 1)%y = yl
+                    ! each surface point ends segment j and starts segment j + 1
+                    ib_airfoil_grids(airfoil_id)%upper(j, 2,:) = [xu, yu]
+                    ib_airfoil_grids(airfoil_id)%upper(j + 1, 1,:) = [xu, yu]
+                    ib_airfoil_grids(airfoil_id)%lower(j, 2,:) = [xl, yl]
+                    ib_airfoil_grids(airfoil_id)%lower(j + 1, 1,:) = [xl, yl]
                 end do
 
-                ib_airfoil_grids(airfoil_id)%upper(Np)%x = ca_in
-                ib_airfoil_grids(airfoil_id)%upper(Np)%y = 0._wp
-                ib_airfoil_grids(airfoil_id)%lower(Np)%x = ca_in
-                ib_airfoil_grids(airfoil_id)%lower(Np)%y = 0._wp
+                ib_airfoil_grids(airfoil_id)%upper(Np - 1, 2,:) = [ca_in, 0._wp]
+                ib_airfoil_grids(airfoil_id)%lower(Np - 1, 2,:) = [ca_in, 0._wp]
+
+                ! outward unit normals: left of the edge on the upper surface, right of it on the lower
+                do j = 1, Np - 1
+                    edge = ib_airfoil_grids(airfoil_id)%upper(j, 2,:) - ib_airfoil_grids(airfoil_id)%upper(j, 1,:)
+                    ib_airfoil_grids(airfoil_id)%upper(j, 3,:) = [-edge(2), edge(1)]/norm2(edge)
+                    edge = ib_airfoil_grids(airfoil_id)%lower(j, 2,:) - ib_airfoil_grids(airfoil_id)%lower(j, 1,:)
+                    ib_airfoil_grids(airfoil_id)%lower(j, 3,:) = [edge(2), -edge(1)]/norm2(edge)
+                end do
 
                 $:GPU_UPDATE(device='[ib_airfoil_grids(airfoil_id)%upper, ib_airfoil_grids(airfoil_id)%lower]')
             end if
@@ -458,7 +497,54 @@ contains
 
     end subroutine s_update_ib_rotation_matrix
 
-    subroutine get_bounding_indices(patch, center, il, ir, jl, jr, kl, kr)
+    subroutine s_get_ib_bound(patch, bound)
+
+        $:GPU_ROUTINE(parallelism='[seq]')
+
+        type(ib_patch_parameters), intent(in) :: patch
+        real(wp), intent(out)                 :: bound
+        real(wp), dimension(2)                :: lx, ly, lz
+
+        if (patch%geometry == 2 .or. patch%geometry == 8) then
+            ! circle and sphere geometries
+            bound = patch%radius
+        else if (patch%geometry == 3) then
+            bound = 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2)
+        else if (patch%geometry == 4 .or. patch%geometry == 11) then
+            ! rectangular geometries
+            bound = ib_airfoil(patch%airfoil_id)%c
+        else if (patch%geometry == 5) then
+            ! STL model geometry
+            lx(1) = stl_bounding_boxes(patch%model_id, 1, 1)
+            lx(2) = stl_bounding_boxes(patch%model_id, 1, 3)
+            ly(1) = stl_bounding_boxes(patch%model_id, 2, 1)
+            ly(2) = stl_bounding_boxes(patch%model_id, 2, 3)
+
+            bound = 0.5_wp*sqrt((lx(2) - lx(1))**2 + (ly(2) - ly(1))**2)
+        else if (patch%geometry == 6) then
+            ! ellipse geometry
+            bound = 0.5_wp*max(patch%length_x, patch%length_y)
+        else if (patch%geometry == 9) then
+            ! cuboid geometries
+            bound = 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2 + patch%length_z**2)
+        else if (patch%geometry == 10) then
+            ! cylinder geometry
+            bound = sqrt(patch%radius**2 + patch%length_x**2)
+        else if (patch%geometry == 12) then
+            ! Local-space bounding box extents (min=1, max=2 in the third index)
+            lx(1) = stl_bounding_boxes(patch%model_id, 1, 1) + patch%centroid_offset(1)
+            lx(2) = stl_bounding_boxes(patch%model_id, 1, 3) + patch%centroid_offset(1)
+            ly(1) = stl_bounding_boxes(patch%model_id, 2, 1) + patch%centroid_offset(2)
+            ly(2) = stl_bounding_boxes(patch%model_id, 2, 3) + patch%centroid_offset(2)
+            lz(1) = stl_bounding_boxes(patch%model_id, 3, 1) + patch%centroid_offset(3)
+            lz(2) = stl_bounding_boxes(patch%model_id, 3, 3) + patch%centroid_offset(3)
+
+            bound = 0.5_wp*sqrt((lx(2) - lx(1))**2 + (ly(2) - ly(1))**2 + (lz(2) - lz(1))**2)
+        end if
+
+    end subroutine s_get_ib_bound
+
+    subroutine s_get_bounding_indices(patch, center, il, ir, jl, jr, kl, kr)
 
         $:GPU_ROUTINE(parallelism='[seq]')
 
@@ -467,22 +553,11 @@ contains
         integer, intent(out)                  :: il, ir, jl, jr, kl, kr
         real(wp), dimension(3)                :: bbox_min, bbox_max, local_corner, world_corner
         real(wp), dimension(2)                :: lx, ly, lz
+        real(wp)                              :: bound
         integer                               :: cx, cy, cz
         logical                               :: outside_domain
 
-        if (patch%geometry == 2 .or. patch%geometry == 8) then
-            ! circle and sphere geometries
-            bbox_min = center - patch%radius
-            bbox_max = center + patch%radius
-        else if (patch%geometry == 3) then
-            ! rectangular geometries
-            bbox_min = center - 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2)
-            bbox_max = center + 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2)
-        else if (patch%geometry == 4 .or. patch%geometry == 11) then
-            ! airfoil geometries TODO :: This can be better optimized, since airfoils are typically very long in one dimension
-            bbox_min = center - ib_airfoil(patch%airfoil_id)%c
-            bbox_max = center + ib_airfoil(patch%airfoil_id)%c
-        else if (patch%geometry == 5) then
+        if (patch%geometry == 5) then
             ! STL model geometry
             lx(1) = stl_bounding_boxes(patch%model_id, 1, 1) + patch%centroid_offset(1)
             lx(2) = stl_bounding_boxes(patch%model_id, 1, 3) + patch%centroid_offset(1)
@@ -502,18 +577,6 @@ contains
                     bbox_max(2) = max(bbox_max(2), world_corner(2))
                 end do
             end do
-        else if (patch%geometry == 6) then
-            ! ellipse geometry
-            bbox_min = center - 0.5_wp*max(patch%length_x, patch%length_y)
-            bbox_max = center + 0.5_wp*max(patch%length_x, patch%length_y)
-        else if (patch%geometry == 9) then
-            ! cuboid geometries
-            bbox_min = center - 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2 + patch%length_z**2)
-            bbox_max = center + 0.5_wp*sqrt(patch%length_x**2 + patch%length_y**2 + patch%length_z**2)
-        else if (patch%geometry == 10) then
-            ! cylinder geometry
-            bbox_min = center - sqrt(patch%radius**2 + patch%length_x**2)
-            bbox_max = center + sqrt(patch%radius**2 + patch%length_x**2)
         else if (patch%geometry == 12) then
             ! Local-space bounding box extents (min=1, max=2 in the third index)
             lx(1) = stl_bounding_boxes(patch%model_id, 1, 1) + patch%centroid_offset(1)
@@ -540,13 +603,20 @@ contains
                     end do
                 end do
             end do
+        else
+            ! All other IBs
+            call s_get_ib_bound(patch, bound)
+            bbox_min = center - bound
+            bbox_max = center + bound
         end if
 
         ! completely skip patches whose bounding box does not overlap this rank's domain
-        outside_domain = bbox_min(1) > x_cc(m + gp_layers + 1) .or. bbox_max(1) < x_cc(-gp_layers - 1) .or. bbox_min(2) > y_cc(n &
-                                  & + gp_layers + 1) .or. bbox_max(2) < y_cc(-gp_layers - 1)
+        ! Markers cover the full halo: image-point stencils of ghost points near a rank boundary read markers up to
+        ! 2*gp_layers+1 cells into it, and an undrawn cell there reads as fluid.
+        outside_domain = bbox_min(1) > x_cc(m + buff_size) .or. bbox_max(1) < x_cc(-buff_size) .or. bbox_min(2) > y_cc(n &
+                                  & + buff_size) .or. bbox_max(2) < y_cc(-buff_size)
         if (num_dims == 3) then
-            outside_domain = outside_domain .or. bbox_min(3) > z_cc(p + gp_layers + 1) .or. bbox_max(3) < z_cc(-gp_layers - 1)
+            outside_domain = outside_domain .or. bbox_min(3) > z_cc(p + buff_size) .or. bbox_max(3) < z_cc(-buff_size)
         end if
 
         if (outside_domain) then
@@ -556,17 +626,17 @@ contains
             return
         end if
 
-        il = -gp_layers - 1
-        jl = -gp_layers - 1
-        kl = -gp_layers - 1
-        ir = m + gp_layers + 1
-        jr = n + gp_layers + 1
-        kr = p + gp_layers + 1
+        il = -buff_size
+        jl = -buff_size
+        kl = -buff_size
+        ir = m + buff_size
+        jr = n + buff_size
+        kr = p + buff_size
         call get_indices_from_bounds(bbox_min(1), bbox_max(1), x_cc, il, ir)
         call get_indices_from_bounds(bbox_min(2), bbox_max(2), y_cc, jl, jr)
         if (num_dims == 3) call get_indices_from_bounds(bbox_min(3), bbox_max(3), z_cc, kl, kr)
 
-    end subroutine get_bounding_indices
+    end subroutine s_get_bounding_indices
 
     subroutine get_indices_from_bounds(left_bound, right_bound, cell_centers, left_index, right_index)
 

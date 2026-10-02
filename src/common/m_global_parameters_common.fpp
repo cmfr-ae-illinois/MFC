@@ -15,8 +15,8 @@ module m_global_parameters_common
 
     use m_derived_types
     use m_thermochem, only: num_species
-    use m_constants, only: model_eqns_gamma_law, model_eqns_5eq, model_eqns_6eq, model_eqns_4eq, recon_type_weno, &
-        & recon_type_muscl, name_len, dflt_int, dflt_real
+    use m_constants, only: num_fluids_max, model_eqns_gamma_law, model_eqns_5eq, model_eqns_6eq, recon_type_weno, &
+        & recon_type_muscl, name_len, dflt_int, dflt_real, eos_stiffened_gas, eos_ideal_gas
 
     implicit none
 
@@ -27,27 +27,11 @@ module m_global_parameters_common
     ! num_dims, num_vels, weno_polyn, muscl_polyn, weno_num_stencils, wenojs, igr, etc.
     #:include 'generated_case_opt_decls.fpp'
 
-    ! For pre_process and post_process: num_dims and num_vels are declared manually here
-    ! (sim gets them from generated_case_opt_decls.fpp above)
-#ifndef MFC_SIMULATION
-    integer :: num_dims  !< Number of spatial dimensions
-    integer :: num_vels  !< Number of velocity components (different from num_dims for mhd)
-#endif
-
-    ! For pre_process: weno_polyn and muscl_polyn are declared manually here
-    ! (sim gets them from generated_case_opt_decls.fpp; post does not use them)
-#ifdef MFC_PRE_PROCESS
-    integer :: weno_polyn   !< Degree of the WENO polynomials
-    integer :: muscl_polyn  !< Degree of the MUSCL polynomials
-#endif
-
     !> @name Annotations of the structure of the state and flux vectors in terms of the size and configuration of the system of
     !! equations
     !> @{
-    integer            :: sys_size     !< Number of unknowns in system of equations
-    type(eqn_idx_info) :: eqn_idx      !< All conserved-variable equation index ranges and scalars
-    integer            :: b_size       !< Number of elements in the symmetric b tensor, plus one
-    integer            :: tensor_size  !< Number of elements in the full tensor plus one
+    integer            :: sys_size  !< Number of unknowns in system of equations
+    type(eqn_idx_info) :: eqn_idx   !< All conserved-variable equation index ranges and scalars
     !> @}
 
     !> @name Chemistry modeling (Fypp compile-time constant; same value in all targets)
@@ -55,60 +39,49 @@ module m_global_parameters_common
     logical, parameter :: chemistry = .${chemistry}$.
     !> @}
 
-    !> @name Elasticity and shear stress state (identical across all three executables)
+    !> @name Hypoelastic shear stress state (identical across all three executables)
     !> @{
-    logical                  :: elasticity             !< elasticity modeling, true for hyper or hypo
     integer                  :: shear_num              !< Number of shear stress components
     integer, dimension(3)    :: shear_indices          !< Indices of the stress components that represent shear stress
     integer                  :: shear_BC_flip_num      !< Number of shear stress components to reflect for boundary conditions
     integer, dimension(3, 2) :: shear_BC_flip_indices  !< Shear stress BC reflection indices (1:3, 1:shear_BC_flip_num)
     !> @}
 
-#ifdef MFC_SIMULATION
-    $:GPU_DECLARE(create='[sys_size, eqn_idx, b_size, tensor_size]')
-    $:GPU_DECLARE(create='[shear_num, shear_indices, shear_BC_flip_num, shear_BC_flip_indices]')
-    ! Device residency for namelist/case-opt state declared above via the generated
-    ! includes: declare directives must live in the declaring module (Cray ftn rejects
-    ! declare-target on use-associated names), so these moved here from simulation.
-    $:GPU_DECLARE(create='[cyl_coord]')
-    $:GPU_DECLARE(create='[dt, m, n, p]')
-    $:GPU_DECLARE(create='[cfl_target]')
-    $:GPU_DECLARE(create='[int_comp, ic_eps, ic_beta]')
-    $:GPU_DECLARE(create='[muscl_eps]')
-    $:GPU_DECLARE(create='[mpp_lim, model_eqns, mixture_err, alt_soundspeed]')
-    $:GPU_DECLARE(create='[avg_state, mp_weno, weno_eps, teno_CT, hypoelasticity]')
-    $:GPU_DECLARE(create='[hyperelasticity, elasticity, low_Mach]')
-    $:GPU_DECLARE(create='[cont_damage, hyper_cleaning]')
-    $:GPU_DECLARE(create='[relax, relax_model, palpha_eps, ptgalpha_eps]')
-    $:GPU_DECLARE(create='[down_sample]')
-    $:GPU_DECLARE(create='[fd_order]')
-    $:GPU_DECLARE(create='[rhoref, pref]')
-    $:GPU_DECLARE(create='[ib, num_ibs]')
-    $:GPU_DECLARE(create='[ib_coefficient_of_friction]')
-    $:GPU_DECLARE(create='[Ca, Web, Re_inv]')
-    $:GPU_DECLARE(create='[bubbles_euler, polytropic, polydisperse]')
-    $:GPU_DECLARE(create='[adv_n, adap_dt, adap_dt_tol, adap_dt_max_iters]')
-    $:GPU_DECLARE(create='[bubble_model, thermal]')
-    $:GPU_DECLARE(create='[poly_sigma]')
-    $:GPU_DECLARE(create='[qbmm, pi_fac]')
-    $:GPU_DECLARE(create='[R0ref]')
-    $:GPU_DECLARE(create='[acoustic_source, num_source]')
-    $:GPU_DECLARE(create='[sigma, surface_tension]')
-    $:GPU_DECLARE(create='[bubbles_lagrange]')
-    $:GPU_DECLARE(create='[Bx0]')
-    $:GPU_DECLARE(create='[tau_star, cont_damage_s, alpha_bar]')
-    $:GPU_DECLARE(create='[hyper_cleaning_speed, hyper_cleaning_tau]')
-    $:GPU_DECLARE(create='[periodic_forcing, forcing_wrt, mom_f_idx, forcing_window, forcing_start, u_inf_ref, rho_inf_ref, P_inf_ref, forcing_dt, fluid_volume_fraction]')
-    $:GPU_DECLARE(create='[particle_control, particle_control_start, particle_bf]')
-    $:GPU_DECLARE(create='[synthetic_turbulence, num_turbulent_sources, synth_U_inf]')
+    !> @name Material properties derived from fluid_pp
+    !> @{ One declaration is shared by all executables and initialized by m_eos after the case parameters have been read.
+    !> gammas is the stored form 1/(gamma - 1), not the ratio of specific heats; isentrope_n and isentrope_B are the same EOS
+    !! written as p + B = const*rho**n.
+    real(wp), allocatable, dimension(:) :: gammas, isentrope_n, pi_infs, isentrope_B, cvs, qvs, qvps
+    $:GPU_DECLARE(create='[gammas, isentrope_n, pi_infs, isentrope_B, cvs, qvs, qvps]')
+    !> Per-fluid EOS selector and Mie-Gruneisen reference curve, resolved once at init like the arrays above
+    integer, allocatable, dimension(:) :: eoss
+    !> Per-fluid EOS coefficients, whatever the family; see type eos_coefficients.
+    type(eos_coefficients), dimension(num_fluids_max) :: eos_coeffs
+    !> any_state_dependent_eos is declared with the case-optimization block above: a parameter when the case is baked in, so the
+    !! compiler drops the whole state-dependent chain from kernels that never need it.
+    $:GPU_DECLARE(create='[eoss, eos_coeffs]')
+    !> Fourier heat conduction: true when any fluid sets k_therm > 0. Derived, never read from the namelist.
+    logical                             :: heat_conduction
+    real(wp), allocatable, dimension(:) :: fluid_k_therm
+    $:GPU_DECLARE(create='[heat_conduction, fluid_k_therm]')
     #:if not MFC_CASE_OPTIMIZATION
-        $:GPU_DECLARE(create='[num_dims, num_vels, weno_polyn, weno_order]')
-        $:GPU_DECLARE(create='[weno_num_stencils, num_fluids, wenojs]')
-        $:GPU_DECLARE(create='[mapped_weno, wenoz, teno, wenoz_q, mhd, relativity]')
-        $:GPU_DECLARE(create='[igr_iter_solver, igr_order, viscous, igr_pres_lim, igr]')
-        $:GPU_DECLARE(create='[recon_type, muscl_order, muscl_polyn, muscl_lim]')
+        $:GPU_DECLARE(create='[any_state_dependent_eos]')
     #:endif
-#endif
+    !> @}
+
+    !> @name Fluids participating in shear and bulk viscosity
+    !> @{
+    integer, dimension(2)                :: Re_size = 0
+    integer                              :: Re_size_max = 0
+    integer, allocatable, dimension(:,:) :: Re_idx
+    $:GPU_DECLARE(create='[Re_size, Re_size_max, Re_idx]')
+    !> @}
+
+    !> Minimum cell widths. These are distinct from the per-cell width arrays named dx, dy, and dz in simulation and post-process.
+    real(wp) :: dx_min, dy_min, dz_min
+
+    $:GPU_DECLARE(create='[sys_size, eqn_idx]')
+    $:GPU_DECLARE(create='[shear_num, shear_indices, shear_BC_flip_num, shear_BC_flip_indices]')
 
     !> @name Processor coordinates and parallel-IO addressing (identical declaration across all three targets)
     !> @{
@@ -127,9 +100,8 @@ module m_global_parameters_common
 
 contains
 
-    !> Initialize equation-index state (eqn_idx, sys_size, b_size, tensor_size) from the namelist parameters. This is the shared
-    !! skeleton: it covers the model_eqns dispatch, all eqn_idx field assignments, and the elasticity/surface-tension/chemistry
-    !! extensions.
+    !> Initialize equation-index state (eqn_idx and sys_size) from the namelist parameters. This is the shared skeleton: it covers
+    !! the model_eqns dispatch, all eqn_idx field assignments, and the hypoelastic/surface-tension/chemistry extensions.
     !!
     !! @param nmom_in  Number of carried moments per R0 location (per-target: pre/post pass an
     !!   integer variable; sim passes its integer parameter nmom = 6).  Used only in the 5eq
@@ -139,10 +111,11 @@ contains
     !!   - qbmm_idx allocations and fills (diverge between pre vs sim/post)
     !!   - sim-only: gam = bub_pp%gam_g, nmomsp/nmomtot, Re_idx allocation, GPU_UPDATE calls
     !!   - post-only: beta_idx increment (bubbles_lagrange path), offset/grid allocations
-    impure subroutine s_initialize_eqn_idx(nmom_in, nb_in)
+    impure subroutine s_initialize_eqn_idx(nmom_in, nb_in, six_eqn_alf_is_advected)
 
         integer, intent(in) :: nmom_in
         integer, intent(in) :: nb_in
+        logical, intent(in) :: six_eqn_alf_is_advected
 
         ! Gamma/Pi_inf Model
 
@@ -228,44 +201,23 @@ contains
             eqn_idx%E = eqn_idx%mom%end + 1
             eqn_idx%adv%beg = eqn_idx%E + 1
             eqn_idx%adv%end = eqn_idx%E + num_fluids
-#ifdef MFC_SIMULATION
-            eqn_idx%alf = eqn_idx%adv%end
-#endif
+            if (six_eqn_alf_is_advected) eqn_idx%alf = eqn_idx%adv%end
             eqn_idx%int_en%beg = eqn_idx%adv%end + 1
             eqn_idx%int_en%end = eqn_idx%adv%end + num_fluids
             sys_size = eqn_idx%int_en%end
-        else if (model_eqns == model_eqns_4eq) then
-            ! 4-equation model with subgrid bubbles
-            eqn_idx%cont%beg = 1
-            eqn_idx%cont%end = 1
-            eqn_idx%mom%beg = eqn_idx%cont%end + 1
-            eqn_idx%mom%end = eqn_idx%cont%end + num_vels
-            eqn_idx%E = eqn_idx%mom%end + 1
-            eqn_idx%adv%beg = eqn_idx%E + 1
-            eqn_idx%adv%end = eqn_idx%adv%beg
-            eqn_idx%alf = eqn_idx%adv%end
-            sys_size = eqn_idx%adv%end
-
-            if (bubbles_euler) then
-                eqn_idx%bub%beg = sys_size + 1
-                eqn_idx%bub%end = sys_size + 2*nb_in
-                if (.not. polytropic) then
-                    eqn_idx%bub%end = sys_size + 4*nb_in
-                end if
-                sys_size = eqn_idx%bub%end
-            end if
         end if
 
         if (model_eqns == model_eqns_5eq .or. model_eqns == model_eqns_6eq) then
-            if (hypoelasticity .or. hyperelasticity) then
-                elasticity = .true.
+            if (hypoelasticity) then
                 eqn_idx%stress%beg = sys_size + 1
                 eqn_idx%stress%end = sys_size + (num_dims*(num_dims + 1))/2
                 if (cyl_coord) eqn_idx%stress%end = eqn_idx%stress%end + 1
                 ! number of stresses is 1 in 1D, 3 in 2D, 4 in 2D-Axisym, 6 in 3D
                 sys_size = eqn_idx%stress%end
 
-                ! shear stress index is 2 for 2D and 2,4,5 for 3D
+                ! shear stress index is 2 for 2D and 2,4,5 for 3D. Readers test the whole array
+                ! rather than the first shear_num entries, so unused slots must not be garbage.
+                shear_indices = 0
                 if (num_dims == 1) then
                     shear_num = 0
                 else if (num_dims == 2) then
@@ -283,16 +235,6 @@ contains
                     shear_BC_flip_indices(3,1:2) = shear_indices((/2, 3/))
                     ! x-dir: flip tau_xy and tau_xz; y-dir: flip tau_xy and tau_yz; z-dir: flip tau_xz and tau_yz
                 end if
-            end if
-
-            if (hyperelasticity) then
-                ! number of entries in the symmetric b tensor plus the jacobian
-                b_size = (num_dims*(num_dims + 1))/2 + 1
-                tensor_size = num_dims**2 + 1
-                eqn_idx%xi%beg = sys_size + 1
-                eqn_idx%xi%end = sys_size + num_dims
-                ! adding equations for the xi field and the elastic energy
-                sys_size = eqn_idx%xi%end + 1
             end if
 
             if (surface_tension) then
@@ -317,6 +259,10 @@ contains
             sys_size = eqn_idx%species%end
         end if
 
+        ! Resolved here, not with the other fluid properties, because the MPI halo buffers are sized before
+        ! m_variables_conversion runs and conduction adds temperature to the exchange.
+        heat_conduction = any(fluid_pp(:)%k_therm > 0._wp)
+
     end subroutine s_initialize_eqn_idx
 
     !> Configure MPI parallel I/O settings and allocate processor coordinate arrays. Shared across all three executables;
@@ -328,7 +274,6 @@ contains
         integer :: ierr  !< Generic flag used to identify and report MPI errors
 #endif
 
-#ifdef MFC_SIMULATION
         ! Under case-optimization, num_dims and num_vels are compile-time parameters; skip assignment.
         #:if not MFC_CASE_OPTIMIZATION
             num_dims = 1 + min(1, n) + min(1, p)
@@ -339,15 +284,6 @@ contains
                 num_vels = num_dims
             end if
         #:endif
-#else
-        num_dims = 1 + min(1, n) + min(1, p)
-
-        if (mhd) then
-            num_vels = 3
-        else
-            num_vels = num_dims
-        end if
-#endif
 
         allocate (proc_coords(1:num_dims))
 
@@ -410,12 +346,17 @@ contains
         relax = .false.
         relax_model = dflt_int
         hypoelasticity = .false.
-        hyperelasticity = .false.
-        elasticity = .false.
-        b_size = dflt_int
-        tensor_size = dflt_int
         cont_damage = .false.
         hyper_cleaning = .false.
+
+        ! Condensed-phase reactive burn
+        reactive_burn = .false.
+        rburn%k = dflt_real
+        rburn%pign = dflt_real
+        rburn%pref = dflt_real
+        rburn%n = dflt_real
+        rburn%ta = 0._wp
+        rburn%substeps = 0
 
         ! Case-optimization params: under case-opt these are compile-time constants in sim (skip assignment); in pre/post
         ! MFC_CASE_OPTIMIZATION is always False so the block always executes there.
@@ -428,11 +369,13 @@ contains
             igr_order = dflt_int
             mhd = .false.
             relativity = .false.
+            viscous = .false.
         #:endif
 
+        ! Not a case-optimization parameter, so it stays a runtime variable in every build.
+        riemann_solver = dflt_int
+
         ! Tait EOS
-        rhoref = dflt_real
-        pref = dflt_real
 
         ! Bubble modeling flags and parameters
         R0ref = dflt_real
@@ -457,6 +400,15 @@ contains
         file_per_process = .false.
         down_sample = .false.
         fft_wrt = .false.
+
+        ! Mixture conversion and sound-speed behavior
+        avg_state = dflt_int
+        alt_soundspeed = .false.
+        mixture_err = .false.
+        sigR = dflt_real
+        dx_min = dflt_real
+        dy_min = dflt_real
+        dz_min = dflt_real
 
     end subroutine s_assign_common_defaults
 

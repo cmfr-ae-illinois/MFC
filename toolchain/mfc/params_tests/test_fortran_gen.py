@@ -117,6 +117,54 @@ def test_decls_dt_for_sim():
     assert "real(wp)                :: dt" in generate_decls_fpp("sim")
 
 
+def test_common_module_decls_do_not_expand_namelists():
+    from mfc.params.definitions import NAMELIST_VARS
+    from mfc.params.generators.fortran_gen import generate_decls_fpp, generate_namelist_fpp
+
+    common_decls = ("avg_state", "alt_soundspeed", "mixture_err", "sigR", "riemann_solver")
+    for target in ("pre", "sim", "post"):
+        declarations = generate_decls_fpp(target)
+        for name in common_decls:
+            assert f":: {name}" in declarations
+
+    # Viscous is a case-optimization parameter, so simulation declares it in
+    # generated_case_opt_decls.fpp instead of generated_decls.fpp.
+    assert ":: viscous" in generate_decls_fpp("pre")
+    assert ":: viscous" in generate_decls_fpp("post")
+
+    assert "riemann_solver" not in generate_namelist_fpp("pre")
+    assert "riemann_solver" not in generate_namelist_fpp("post")
+    assert NAMELIST_VARS["avg_state"] == {"sim", "post"}
+    assert NAMELIST_VARS["alt_soundspeed"] == {"sim", "post"}
+    assert NAMELIST_VARS["mixture_err"] == {"sim", "post"}
+    assert NAMELIST_VARS["sigR"] == {"pre", "post"}
+    assert NAMELIST_VARS["viscous"] == {"pre", "sim"}
+    assert NAMELIST_VARS["riemann_solver"] == {"sim"}
+
+
+def test_stl_model_declarations_do_not_expand_post_namelist():
+    from mfc.params.generators.fortran_gen import generate_decls_fpp, generate_namelist_fpp
+
+    post_declarations = generate_decls_fpp("post")
+    post_namelist = generate_namelist_fpp("post")
+
+    assert ":: num_stl_models" in post_declarations
+    assert ":: stl_models" in post_declarations
+    assert "num_stl_models" not in post_namelist
+    assert "stl_models" not in post_namelist
+
+
+def test_phase_change_declarations_do_not_expand_post_namelist():
+    from mfc.params.generators.fortran_gen import generate_decls_fpp, generate_namelist_fpp
+
+    post_declarations = generate_decls_fpp("post")
+    post_namelist = generate_namelist_fpp("post")
+
+    for name in ("palpha_eps", "ptgalpha_eps"):
+        assert f":: {name}" in post_declarations
+        assert name not in post_namelist
+
+
 def test_decls_no_percent_vars():
     from mfc.params.generators.fortran_gen import generate_decls_fpp
 
@@ -210,13 +258,13 @@ def test_check_target_raises_on_bad_target():
         generate_decls_fpp("bad")
 
 
-def test_get_generated_files_returns_fifteen():
+def test_get_generated_files_returns_eighteen():
     from pathlib import Path
 
     from mfc.params.generators.fortran_gen import get_generated_files
 
     files = get_generated_files(Path("/build"))
-    assert len(files) == 15
+    assert len(files) == 18
     paths = [str(p) for p, _ in files]
     assert any("pre_process/generated_namelist.fpp" in p for p in paths)
     assert any("simulation/generated_decls.fpp" in p for p in paths)
@@ -250,10 +298,11 @@ def test_get_generated_files_includes_bcast():
         "generated_namelist.fpp",
         "generated_decls.fpp",
         "generated_constants.fpp",
+        "generated_eos.fpp",
         "generated_case_opt_decls.fpp",
         "generated_bcast.fpp",
     }
-    assert len(files) == 15
+    assert len(files) == 18
 
 
 def test_generate_case_opt_decls_fpp():
@@ -296,6 +345,33 @@ def test_generate_case_opt_decls_fpp():
 
     # AUTO-GENERATED header present
     assert "AUTO-GENERATED" in out
+
+
+def test_common_computed_scalars_are_declared_for_every_target():
+    from pathlib import Path
+
+    from mfc.params.generators.fortran_gen import get_generated_files
+
+    files = {path.parent.name: content for path, content in get_generated_files(Path("/build")) if path.name == "generated_case_opt_decls.fpp"}
+    for target in ("pre_process", "simulation", "post_process"):
+        for name in ("num_dims", "num_vels", "weno_polyn", "muscl_polyn"):
+            assert f":: {name}" in files[target]
+
+
+def test_simulation_generated_scalars_own_gpu_declarations():
+    from mfc.params.generators.fortran_gen import SIM_GPU_DECL_VARS, generate_case_opt_decls_fpp, generate_decls_fpp
+
+    generated = generate_decls_fpp("sim") + generate_case_opt_decls_fpp()
+    for name in SIM_GPU_DECL_VARS:
+        assert generated.count(f"$:GPU_DECLARE(create='[{name}]')") == 1
+
+
+def test_hypo_riemann_controls_own_gpu_declarations():
+    from mfc.params.generators.fortran_gen import generate_decls_fpp
+
+    generated = generate_decls_fpp("sim")
+    for name in ("riemann_hypo_ADC", "ADC_kappa", "hll_u_interface", "hypo_hll_interface_rhs"):
+        assert generated.count(f"$:GPU_DECLARE(create='[{name}]')") == 1
 
 
 # ── generate_bcast_fpp tests ──────────────────────────────────────────────────
@@ -365,9 +441,9 @@ def test_generate_bcast_fpp_class_a_real_scalars():
     assert "call MPI_BCAST(dt, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)" in sim
     assert "call MPI_BCAST(dt, " not in pre and "call MPI_BCAST(dt, " not in post
 
-    # pref is in all three
+    # poly_sigma is in all three
     for out, target in [(pre, "pre"), (sim, "sim"), (post, "post")]:
-        assert "call MPI_BCAST(pref, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)" in out, f"{target}: pref missing"
+        assert "call MPI_BCAST(poly_sigma, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)" in out, f"{target}: poly_sigma missing"
 
 
 def test_generate_bcast_fpp_class_a_str_scalars():
@@ -636,3 +712,79 @@ def test_mpi_proxy_residue_pins_wall_velocity_and_bc_datatypes():
         assert "'bc_x%beg', 'bc_x%end', 'bc_y%beg', 'bc_y%end', 'bc_z%beg', 'bc_z%end']" in src
         seg = src.split("'bc_z%beg', 'bc_z%end']", 1)[1]
         assert "MPI_INTEGER" in seg.split("#:endfor")[0], f"{target}: BC codes not MPI_INTEGER"
+
+
+def test_eos_coeff_layers_split_by_writer_count():
+    """A field several families write must be family-dispatched; a single-writer field need not be."""
+    from mfc.params.eos_families import EOS_FAMILIES
+    from mfc.params.generators.fortran_gen import _eos_case_fields
+
+    all_fields = {name for family in EOS_FAMILIES for name in family.eos_coeffs}
+    case_fields = _eos_case_fields()
+    assert case_fields == {"rho0", "t0", "gruneisen0", "gruneisen_a"}
+    assert all_fields - case_fields == {"c0", "s", "s2", "s3", "a", "b", "r1", "r2", "k0", "k0p", "mu_max"}
+
+
+def test_generate_eos_fpp_predicates():
+    from mfc.params.generators.fortran_gen import generate_eos_fpp
+
+    out = generate_eos_fpp()
+    assert "#:def EOS_IS_STATE_DEPENDENT(i)\neoss(${i}$) == eos_mie_gruneisen .or. eoss(${i}$) == eos_jwl .or. eoss(${i}$) == eos_vinet\n#:enddef" in out
+    assert "#:def EOS_HAS_ISENTROPIC_REFERENCE(i)\neoss(${i}$) == eos_jwl .or. eoss(${i}$) == eos_vinet\n#:enddef" in out
+    # The runtime gruneisen_a term is not a family property and must stay in m_eos.fpp.
+    assert "gruneisen_a == 0._wp" not in out.split("#:def EOS_INIT_COEFFS")[0]
+    assert out == generate_eos_fpp()
+
+
+def test_generate_eos_fpp_predicates_fit_on_one_line():
+    """The predicates expand inline, so the widest call site must stay inside Fortran's 132 columns."""
+    from mfc.params.generators.fortran_gen import generate_eos_fpp
+
+    body = {}
+    lines = generate_eos_fpp().splitlines()
+    for n, line in enumerate(lines):
+        if line.startswith("#:def EOS_") and not line.startswith("#:def EOS_INIT_"):
+            body[line] = lines[n + 1].replace("${i}$", "i")
+    assert body, "no predicate macros emitted"
+    # m_eos.fpp's two call sites: a bare assignment, and one wrapped in the runtime gruneisen_a test.
+    sites = {
+        "#:def EOS_IS_STATE_DEPENDENT(i)": ("        yes = ", ""),
+        "#:def EOS_HAS_ISENTROPIC_REFERENCE(i)": ("        yes = (", ") .and. eos_coeffs(i)%gruneisen_a == 0._wp"),
+    }
+    assert set(body) == set(sites)
+    for macro, (before, after) in sites.items():
+        rendered = len(before) + len(body[macro]) + len(after)
+        assert rendered <= 132, f"{macro} call site would render {rendered} columns"
+
+
+def test_generate_eos_fpp_init_sources():
+    """The three eos_coeffs source kinds: a parameter copy, a bare literal, and a computed call."""
+    from mfc.params.generators.fortran_gen import generate_eos_fpp
+
+    out = generate_eos_fpp().replace("${i}$", "i")
+    assert "    eos_coeffs(i)%c0 = fluid_pp(i)%mg_c0\n" in out
+    assert "        eos_coeffs(i)%gruneisen_a = 0._wp\n    case (eos_vinet)" in out
+    assert "eos_coeffs(i)%mu_max = f_hugoniot_compression_limit(fluid_pp(i)%mg_c0, fluid_pp(i)%mg_s, fluid_pp(i)%mg_s2, &\n        & fluid_pp(i)%mg_s3)" in out
+    assert max(len(line) for line in out.splitlines()) <= 132
+    # case default: dflt_real everywhere but gruneisen_a, which s_reference_curve reads unconditionally.
+    default_arm = out.split("    case default\n")[1].splitlines()
+    assert default_arm[:5] == [
+        "        eos_coeffs(i)%rho0 = dflt_real",
+        "        eos_coeffs(i)%t0 = dflt_real",
+        "        eos_coeffs(i)%gruneisen0 = dflt_real",
+        "        eos_coeffs(i)%gruneisen_a = 0._wp",
+        "    end select",
+    ]
+
+
+def test_eos_computed_call_rejects_what_it_cannot_qualify():
+    import pytest
+
+    from mfc.params.eos_families import EOS_FAMILIES
+    from mfc.params.generators.fortran_gen import _eos_computed_call
+
+    mg = next(f for f in EOS_FAMILIES if f.suffix == "mie_gruneisen")
+    with pytest.raises(ValueError, match="not one of the family's parameters"):
+        _eos_computed_call(mg, "f_x(mg_c0, jwl_a)", "i")
+    with pytest.raises(ValueError, match="not a plain"):
+        _eos_computed_call(mg, "mg_c0 + 1._wp", "i")

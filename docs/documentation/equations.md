@@ -23,9 +23,9 @@ where:
 - \f$\mathbf{h}(\mathbf{q})\,\nabla \cdot \mathbf{u}\f$ contains non-conservative terms (volume fraction advection),
 - \f$\mathbf{s}(\mathbf{q})\f$ is the source vector (bubbles, body forces, chemistry, etc.).
 
-The parameter `model_eqns` (1, 2, 3, or 4) selects the governing equation set.
+The parameter `model_eqns` (1, 2, or 3) selects the governing equation set.
 
-**Key source files:** `src/simulation/m_rhs.fpp` (RHS evaluation), `src/common/m_variables_conversion.fpp` (EOS and variable conversion).
+**Key source files:** `src/simulation/m_rhs.fpp` (RHS evaluation), `src/common/m_eos.fpp` (equations of state), `src/common/m_variables_conversion.fpp` (variable conversion and mixture rules).
 
 ---
 
@@ -299,7 +299,6 @@ See Section 8 (Phase Change) below for details.
 ### 2.3 Other Model Variants
 
 - `model_eqns = 1`: **Gamma/pi_inf model** — simplified single-fluid formulation using mixture \f$\gamma\f$ and \f$\pi_\infty\f$ directly without tracking individual volume fractions (\cite Johnsen08).
-- `model_eqns = 4`: **Four-equation model** — reduced model from the six-equation system after full pressure-temperature equilibrium relaxation (Tait-like compressible liquid).
 
 ---
 
@@ -397,6 +396,26 @@ This covers power-law shear-thinning/thickening (\f$\tau_0 = 0\f$), Bingham plas
 
 ---
 
+## 4a. Fourier Heat Conduction (`fluid_pp(i)%%k_therm`)
+
+**Source:** `src/simulation/m_conduction.fpp`
+
+Setting `fluid_pp(i)%%k_therm > 0` on any fluid adds a Fourier conduction term to the energy equation:
+
+\f[\frac{\partial(\rho E)}{\partial t} + \nabla\cdot\bigl[(\rho E + p)\,\mathbf{u}\bigr] = \cdots + \nabla\cdot(k\,\nabla T)\f]
+
+using a single thermal-equilibrium mixture temperature \f$T\f$ (the same value carried in `q_T_sf` and written by `T_wrt`) and a volume-fraction-weighted mixture conductivity:
+
+\f[k = \sum_i \alpha_i\,k_i, \qquad T = \frac{(\Gamma+1)\,p + \Pi_\infty}{\sum_i \alpha_i\rho_i\,c_{v,i}\,n_i}\f]
+
+The flux is direction-split and face-centered: a two-point difference of \f$T\f$ across each face, exact for this term since it has no cross-derivatives (an axis-cell correction applies in cylindrical coordinates; see the limitation below). The closure is implemented for the stiffened-gas and ideal-gas equations of state only, and for `model_eqns = 2` (5-equation) or `model_eqns = 3` (6-equation) — both carry the volume fractions \f$\alpha_i\f$ that weight \f$k\f$, which `model_eqns = 1` (gamma law) does not. Heat conduction is independent of `viscous`: it can be active in an otherwise inviscid simulation. It is not supported together with `igr` or `chemistry`; see @ref sec-fluid-materials in the case documentation for the full set of input constraints.
+
+A thermal diffusion CFL limit (`TCFL`) is added to the adaptive time-step candidates alongside `ICFL`/`VCFL`/`CCFL`.
+
+**Known limitation:** in cylindrical coordinates, the cell adjacent to the axis carries a non-converging \f$\sim\f$1-3% error in the conduction term. It is inherited from the two-point face-gradient every MFC diffusive flux uses, applied across the coordinate singularity at the axis — the same pattern as the two-point gradient in the chemistry diffusion flux (`src/common/m_chemistry.fpp`).
+
+---
+
 ## 5. Cylindrical Coordinates (`cyl_coord = .true.`) (\cite Wilfong26 Sec. 2.3)
 
 Additional geometric source terms appear with \f$1/r\f$ factors in the continuity, momentum, and energy equations. Key modifications:
@@ -420,7 +439,7 @@ Additional geometric source terms appear with \f$1/r\f$ factors in the continuit
 
 **Modified mixture pressure:**
 
-\f[p = (1 - \alpha)\,p_l + \alpha\left(\frac{R^3\,p_{bw}}{\bar{R}^3} - \frac{\rho\,R^3\,\dot{R}^2}{\bar{R}^3}\right)\f]
+\f[p = (1 - \alpha)\,p_l + \alpha\left(\frac{R^3\,p_{bw}}{\bar{R}^3} + \frac{\rho\,R^3\,\dot{R}^2}{\bar{R}^3}\right)\f]
 
 **Modified stiffened gas for the liquid phase:**
 
@@ -522,6 +541,25 @@ with \f$\sigma = \varepsilon_b \max(\Delta x^{1/3}_\text{cell},\;R_\text{bubble}
 
 Each bubble is tracked individually with Keller-Miksis dynamics and 4th-order adaptive Runge-Kutta time integration.
 
+**Translational motion (`vel_model > 0`):**
+
+Bubbles may also translate through the carrier flow. Let \f$\mathbf{x}_b\f$ be the bubble position, \f$\mathbf{u}_b\f$ its velocity, \f$a\f$ its radius, and \f$\mathbf{u}_l(\mathbf{x}_b)\f$ the carrier velocity interpolated to the bubble location (a Lagrange polynomial of order `fd_order`, which must be set when `vel_model > 0`).
+
+- **Tracer bubbles (`vel_model = 1`)** follow the local carrier velocity:
+  \f[\frac{d\mathbf{x}_b}{dt} = \mathbf{u}_l(\mathbf{x}_b).\f]
+
+- **Newton's second law (`vel_model = 2`)** integrates the bubble momentum:
+  \f[m_b\,\frac{d\mathbf{u}_b}{dt} = \mathbf{F}_D + \mathbf{F}_p + \mathbf{F}_g, \qquad \frac{d\mathbf{x}_b}{dt} = \mathbf{u}_b,\f]
+  with bubble mass \f$m_b\f$ and forces acting on the slip velocity \f$\mathbf{u}_\text{rel} = \mathbf{u}_b - \mathbf{u}_l\f$:
+
+| Force | `case.py` control | Non-dimensional form |
+|---|---|---|
+| Drag \f$\mathbf{F}_D\f$ | `drag_model` | \f$-\,c_D\,\pi\,a\,\mathbf{u}_\text{rel} / \text{Re}\f$, with \f$c_D = 4\f$ free-slip (\cite Hadamard1911; \cite Rybczynski1911), \f$c_D = 6\f$ no-slip Stokes (\cite Stokes1851), \f$c_D = 12\f$ Levich (\cite Levich1962) |
+| Pressure \f$\mathbf{F}_p\f$ | `pressure_force` | \f$-V_b\,\nabla p\f$, with bubble volume \f$V_b = \frac{4}{3}\pi a^3\f$ |
+| Gravity \f$\mathbf{F}_g\f$ | `gravity_force` | \f$m_b\,\mathbf{g}\f$, with \f$\mathbf{g}\f$ the body-force acceleration |
+
+Here \f$\text{Re}\f$ is the mixture Reynolds number — the same `fluid_pp%%Re(1)` that scales the viscous stress tensor (@ref sec-two-viscosities) — so the drag scales with the liquid viscosity. The three drag models increase in magnitude free-slip \f$<\f$ no-slip \f$<\f$ Levich; see \cite Magnaudet2000 for a review of these bubble-drag regimes.
+
 ---
 
 ## 7. Fluid-Structure Interaction
@@ -554,33 +592,25 @@ where \f$\mathbf{l} = \nabla \mathbf{u}\f$ is the velocity gradient and \f$\math
 
 This adds 6 additional transport equations in 3D (symmetric stress tensor: \f$\tau_{xx}^e, \tau_{xy}^e, \tau_{yy}^e, \tau_{xz}^e, \tau_{yz}^e, \tau_{zz}^e\f$).
 
-### 7.2 Hyperelastic Model (`hyperelasticity = .true.`) (\cite Kamrin12; \cite Wilfong26 Sec. 4.1.6)
+### 7.2 Continuum Damage (`cont_damage = .true.`) (\cite Cao19; \cite Spratt24 Sec. 4.1.2)
 
-**Source:** `src/simulation/m_hyperelastic.fpp`
+**Source:** `src/simulation/m_hypoelastic.fpp`
 
-**Reference map evolution:**
+A scalar damage field \f$D \in [0,1]\f$ is transported with the damageable-solid partial mass
+\f$m_s = \sum_{i:\,G_i > 0} \alpha_i \rho_i\f$:
 
-\f[\frac{\partial (\rho\,\boldsymbol{\xi})}{\partial t} + \nabla \cdot (\rho\,\boldsymbol{\xi} \otimes \mathbf{u}) = 0\f]
+\f[\frac{\partial (m_s D)}{\partial t} + \nabla \cdot (m_s D\, \mathbf{u}) = m_s\,\dot{D}\f]
 
-**Deformation gradient from reference map:**
+Damage grows when the maximum principal Cauchy stress
+\f$\sigma_1 = \lambda_{\max}(-p\mathbf{I} + \boldsymbol{\tau}^e)\f$ exceeds \f$\tau^*\f$:
 
-\f[\mathbf{F} = (\nabla \boldsymbol{\xi})^{-1}\f]
+\f[\dot{D} = \bigl(\bar{\alpha}\,\max(\sigma_1 - \tau^*,\, 0)\bigr)^{s}\f]
 
-**Left Cauchy-Green tensor:**
+The damaged shear modulus is
 
-\f[\mathbf{b} = \mathbf{F}\,\mathbf{F}^T\f]
+\f[G = G_0(1-D),\f]
 
-**Neo-Hookean Cauchy stress:**
-
-\f[\boldsymbol{\tau}^e = \frac{G}{J}\left(\mathbf{b} - \frac{\text{tr}(\mathbf{b})}{3}\,\mathbf{I}\right)\f]
-
-where \f$J = \det(\mathbf{F})\f$.
-
-**Hyperelastic energy:**
-
-\f[e^e = \frac{G}{2}\bigl(I_{\mathbf{b}} - 3\bigr), \qquad I_{\mathbf{b}} = \text{tr}(\mathbf{b})\f]
-
----
+and is used in the elastic stress evolution and HLL/HLLC wave speeds; elastic energy uses the undamaged modulus \f$G_0\f$.
 
 ## 8. Phase Change (`relax = .true.`) (\cite Wilfong26 Sec. 4.1.3)
 
@@ -648,13 +678,13 @@ Enthalpy flux with diffusion:
 
 \f[q_\text{diff} = \lambda\,\frac{\partial T}{\partial x} + \sum_k h_k\,\dot{m}_k\f]
 
-Reaction mechanisms are code-generated via Pyrometheus (\cite Cisneros26), which provides symbolic abstractions for thermochemistry that enable portable GPU computation and automatic differentiation of chemical source terms.
+Reaction mechanisms are compiled into Fortran by MFC's own thermochemistry generator, using Cantera to load mechanism and transport data. The generator derives from the Fortran path of Pyrometheus (\cite Cisneros26), with its MIT attribution retained. The generated routines support CPU, OpenACC, and OpenMP execution; MFC does not require Pyrometheus, JAX, or automatic differentiation. See @ref thermochemistry "Thermochemistry implementation".
 
 ---
 
 ## 10. Surface Tension (`surface_tension = .true.`) (\cite Schmidmayer17; \cite Wilfong26 Sec. 4.1.8)
 
-**Source:** `src/simulation/m_surface_tension.fpp`, `src/simulation/include/inline_capillary.fpp`
+**Source:** `src/simulation/m_surface_tension.fpp`
 
 **Color function advection:**
 
@@ -883,15 +913,32 @@ Four-state solver resolving the contact discontinuity. Star-state satisfies:
 
 Iterative exact Riemann solver.
 
-#### HLLD (`riemann_solver = 4`, MHD only)
+#### HLLD (`riemann_solver = 4`, MHD or hypoelasticity)
 
-Seven-state solver for ideal MHD resolving fast magnetosonic, Alfven, and contact waves (\cite Miyoshi05). The Riemann fan is divided by outer wave speeds \f$S_L\f$, \f$S_R\f$, Alfven speeds \f$S_L^*\f$, \f$S_R^*\f$, and a middle contact \f$S_M\f$:
+**MHD HLLD.** Seven-state solver for ideal MHD resolving fast magnetosonic, Alfven, and contact waves (\cite Miyoshi05). The Riemann fan is divided by outer wave speeds \f$S_L\f$, \f$S_R\f$, Alfven speeds \f$S_L^*\f$, \f$S_R^*\f$, and a middle contact \f$S_M\f$:
 
 \f[S_M = \frac{(S_R - u_R)\rho_R u_R - (S_L - u_L)\rho_L u_L - p_{T,R} + p_{T,L}}{(S_R - u_R)\rho_R - (S_L - u_L)\rho_L}\f]
 
 \f[S_L^* = S_M - \frac{|B_x|}{\sqrt{\rho_L^*}}, \qquad S_R^* = S_M + \frac{|B_x|}{\sqrt{\rho_R^*}}\f]
 
 where \f$p_T = p + |\mathbf{B}|^2/2\f$ is the total (thermal + magnetic) pressure. Continuity of normal velocity and total pressure is enforced across the Riemann fan.
+
+**Hypoelastic HLLD.** Shares the five-wave Riemann fan structure with MHD HLLD, but differs substantially in formulation. Elastic shear waves play the role of Alfven waves, with total pressure \f$p_T = p - \tau_{nn}\f$ and shear wave impedance \f$C = \hat{\rho}(\hat{G} + \hat{\tau}_{nn})\f$. However, the non-conservative nature of the multi-component elastic stress equations — particularly at material interfaces where \f$G\f$ is discontinuous — requires a dedicated treatment distinct from the MHD solver.
+
+The solver uses an **anchored dual-pass** formulation. Each Riemann solve at interface \f$j{+}1/2\f$ requires cell-centered quantities for the non-conservative products; these are taken as cell-centered values from the cell that the flux will update, rather than from the reconstructed interface states:
+
+\f[\mathbf{F}_{j+1/2}^{\text{left}} = \text{HLLD}\!\left(\mathbf{q}_{j+1/2}^L,\;\mathbf{q}_{j+1/2}^R;\;\mathbf{q}_{\text{cell},\,j}\right), \qquad \mathbf{F}_{j-1/2}^{\text{right}} = \text{HLLD}\!\left(\mathbf{q}_{j-1/2}^L,\;\mathbf{q}_{j-1/2}^R;\;\mathbf{q}_{\text{cell},\,j}\right)\f]
+
+\f[\frac{d\mathbf{U}_j}{dt} = \frac{1}{\Delta x}\!\left(\mathbf{F}_{j-1/2}^{\text{right}} - \mathbf{F}_{j+1/2}^{\text{left}}\right)\f]
+
+This formulation enables HLLD to be used with the non-conservative terms that affect the eigenstructure of the quasi-linear Jacobian. Volume fraction advection is built into the HLLD flux rather than treated as a separate non-conservative step.
+
+#### Developer Notes on Non-Conservative Term Implementation
+
+For details on how the Riemann solvers discretize non-conservative terms (volume fraction advection, Kapila \f$K\,\nabla\!\cdot\!\mathbf{u}\f$, and hypoelastic velocity gradients) and hand off interface quantities to the RHS, see the notes in `misc/dev_notes/`:
+
+- `HLL_HLLC_non_conservative_terms_derivations.md` — Mathematical derivation of HLL Method 1 (alpha-interface), Method 2 (u-interface), and HLLC transport traces, including the \f$S_M\zeta_K\f$ star-branch construction and ADC blending.
+- `Riemann_and_RHS_source_terms_explanations.md` — Code dataflow: which arrays carry what between m_riemann_solvers and m_rhs, overloading of flux_src, the three NC advection modes (adv_src_mode_alpha_iface, adv_src_mode_vel_iface, adv_src_mode_none), and the nc_iface_vel second export channel.
 
 ### 15.3 Time Integration
 

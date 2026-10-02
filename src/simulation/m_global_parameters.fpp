@@ -14,10 +14,8 @@ module m_global_parameters
 
     use m_derived_types
     use m_helper_basic
-    ! Shared state: generated_decls, generated_case_opt_decls, sys_size, eqn_idx, b_size, tensor_size, chemistry, elasticity,
-    ! shear_*
+    ! Shared state: generated_decls, generated_case_opt_decls, sys_size, eqn_idx, chemistry, shear_*
     use m_global_parameters_common
-    ! $:USE_GPU_MODULE()
 
     implicit none
 
@@ -47,13 +45,13 @@ module m_global_parameters
     !> @name Cell-boundary (CB) locations in the x-, y- and z-directions, respectively
     !> @{
     real(wp), target, allocatable, dimension(:) :: x_cb, y_cb, z_cb
+    type(bounds_info), dimension(3)             :: glb_bounds
     !> @}
 
     !> @name Cell-center (CC) locations in the x-, y- and z-directions, respectively
     !> @{
     real(wp), target, allocatable, dimension(:) :: x_cc, y_cc, z_cc
     !> @}
-    ! type(bounds_info) :: x_domain, y_domain, z_domain !< Locations of the domain bounds in the x-, y- and z-coordinate directions
     !> @name Cell-width distributions in the x-, y- and z-directions, respectively
     !> @{
     real(wp), target, allocatable, dimension(:) :: dx, dy, dz
@@ -61,17 +59,38 @@ module m_global_parameters
 
     $:GPU_DECLARE(create='[x_cb, y_cb, z_cb, x_cc, y_cc, z_cc, dx, dy, dz]')
 
+    ! dt, m, n, p, cfl_target: GPU-declared via generated_decls.fpp (registered params)
+    $:GPU_DECLARE(create='[glb_bounds]')
+
     logical :: cfl_dt
     ! Simulation Algorithm Parameters generated_case_opt_decls.fpp: now in m_global_parameters_common
 
-    integer :: hyper_model  !< hyperelasticity solver algorithm
-    ! elasticity, chemistry: in m_global_parameters_common
+    !> Hypoelastic NC velocity-coupling mode; exactly one value, derived from riemann_solver + hypo_hll_interface_rhs.
+    integer, parameter :: hypo_nc_mode_none = 0         !< no hypoelastic NC velocity coupling
+    integer, parameter :: hypo_nc_mode_finite_diff = 1  !< velocity gradients by finite difference (HLL without interface RHS)
+    !> interface-velocity export for the velocity-gradient tensor (HLL Method 2, HLLC)
+    integer, parameter :: hypo_nc_mode_interface = 2
+    integer, parameter :: hypo_nc_mode_dual_pass = 3  !< anchored dual-pass HLLD; all NC terms stay in the Riemann flux
+    integer            :: hypo_nc_mode
+    !> NC volume-fraction advection export mode; exactly one value, derived from riemann_solver + hll_u_interface.
+    integer, parameter :: adv_src_mode_unset = 0        !< not yet derived
+    integer, parameter :: adv_src_mode_alpha_iface = 1  !< flux_src exports per-fluid interface alpha
+    integer, parameter :: adv_src_mode_vel_iface = 2    !< flux_src exports shared face-normal interface velocity
+    integer, parameter :: adv_src_mode_none = 3         !< flux_src exports no NC advection quantity
+    integer            :: adv_src_mode
+    logical            :: use_nc_iface_vel              !< nc_iface_vel exports interface velocities needed outside flux_src
+    ! chemistry: in m_global_parameters_common
     logical                :: shear_stress  !< Shear stresses
     logical                :: bulk_stress   !< Bulk stresses
     logical                :: bodyForces
     real(wp), dimension(3) :: accel_bf
     $:GPU_DECLARE(create='[accel_bf]')
-    ! $:GPU_DECLARE(create='[k_x,w_x,p_x,g_x,k_y,w_y,p_y,g_y,k_z,w_z,p_z,g_z]')
+
+    !> Source fields for the spatially supported body force. `spatial_bf` and
+    !> `bf_spatial_support` are auto-generated in generated_decls.fpp.
+    real(wp), allocatable, dimension(:,:,:) :: spbf_source_x
+    real(wp), allocatable, dimension(:,:,:) :: spbf_source_y
+    $:GPU_DECLARE(create='[spbf_source_x, spbf_source_y]')
 
     ! Synthetic turbulence (scalars auto-generated in generated_decls.fpp; their
     ! GPU_DECLARE lines live in m_global_parameters_common)
@@ -83,13 +102,15 @@ module m_global_parameters
 
     integer :: cpu_start, cpu_end, cpu_rate
 
-    $:GPU_DECLARE(create='[hyper_model]')
     $:GPU_DECLARE(create='[shear_stress, bulk_stress]')
+    $:GPU_DECLARE(create='[hypo_nc_mode]')
 
-    logical :: bc_io
+    logical               :: bc_io
+    logical, dimension(3) :: periodic_bc
     !> @name Boundary conditions (BC) in the x-, y- and z-directions, respectively
     !> @{
     type(int_bounds_info) :: bc_x, bc_y, bc_z
+    type(bc_xyz_info)     :: bc
     !> @}
     !> @name Original boundary conditions preserved for immersed boundary code
     !> (bc_x/y/z get overwritten with MPI neighbor ranks during decomposition)
@@ -100,17 +121,29 @@ module m_global_parameters
     $:GPU_DECLARE(create='[bc_x%vb1, bc_x%vb2, bc_x%vb3, bc_x%ve1, bc_x%ve2, bc_x%ve3]')
     $:GPU_DECLARE(create='[bc_y%vb1, bc_y%vb2, bc_y%vb3, bc_y%ve1, bc_y%ve2, bc_y%ve3]')
     $:GPU_DECLARE(create='[bc_z%vb1, bc_z%vb2, bc_z%vb3, bc_z%ve1, bc_z%ve2, bc_z%ve3]')
-    $:GPU_DECLARE(create='[ib_bc_x%beg, ib_bc_y%beg, ib_bc_z%beg]')
+    $:GPU_DECLARE(create='[bc_x%vel_in_ramp, bc_x%vel_in_t0, bc_x%vel_in_frac0]')
+    $:GPU_DECLARE(create='[bc_y%vel_in_ramp, bc_y%vel_in_t0, bc_y%vel_in_frac0]')
+    $:GPU_DECLARE(create='[bc_z%vel_in_ramp, bc_z%vel_in_t0, bc_z%vel_in_frac0]')
+    $:GPU_DECLARE(create='[ib_bc_x%beg, ib_bc_x%end, ib_bc_y%beg, ib_bc_y%end, ib_bc_z%beg, ib_bc_z%end]')
 #elif defined(MFC_OpenMP)
     $:GPU_DECLARE(create='[bc_x, bc_y, bc_z]')
     $:GPU_DECLARE(create='[ib_bc_x, ib_bc_y, ib_bc_z]')
 #endif
-    type(bounds_info) :: x_domain, y_domain, z_domain
+    $:GPU_DECLARE(create='[bc]')
     type(bounds_info) :: neighbor_domain_x, neighbor_domain_y, neighbor_domain_z
     integer           :: num_gbl_ibs, num_local_ibs
-    $:GPU_DECLARE(create='[x_domain, y_domain, z_domain, neighbor_domain_x, neighbor_domain_y, neighbor_domain_z, num_gbl_ibs]')
+    $:GPU_DECLARE(create='[neighbor_domain_x, neighbor_domain_y, neighbor_domain_z, num_gbl_ibs]')
 
     ! proc_coords, start_idx, mpiiofs, mpi_info_int: in m_global_parameters_common
+    ! down_sample: GPU-declared via generated_decls.fpp (registered param)
+
+    !> @name MPI domain-decomposition state for Lagrangian-bubble exchange (#1290)
+    !> @{
+    type(bounds_info), allocatable, dimension(:) :: pcomm_coords    !< Local rank physical domain bounds
+    type(int_bounds_info), dimension(3)          :: nidx            !< Neighbor index offsets per direction
+    integer, allocatable, dimension(:,:,:)       :: neighbor_ranks  !< MPI ranks of neighbors
+    $:GPU_DECLARE(create='[pcomm_coords]')
+    !> @}
     type(mpi_io_var), public                      :: MPI_IO_DATA
     type(mpi_io_ib_var), public                   :: MPI_IO_IB_DATA
     type(mpi_io_airfoil_ib_var), public           :: MPI_IO_airfoil_IB_DATA
@@ -118,7 +151,7 @@ module m_global_parameters
     type(mpi_io_levelset_norm_var), public        :: MPI_IO_levelsetnorm_DATA
     real(wp), allocatable, dimension(:,:), public :: MPI_IO_DATA_lag_bubbles
 
-    ! sys_size, eqn_idx, b_size, tensor_size: in m_global_parameters_common (GPU_DECLARE there too)
+    ! sys_size and eqn_idx: in m_global_parameters_common (GPU_DECLARE there too)
     type(qbmm_idx_info) :: qbmm_idx  !< QBMM moment index mappings (allocatable; GPU-managed separately).
 
     ! Cell Indices for the (local) interior points (O-m, O-n, 0-p). Stands for "InDices With INTerior".
@@ -129,16 +162,6 @@ module m_global_parameters
     ! idwint are the same otherwise. Stands for "InDices With BUFFer".
     type(int_bounds_info) :: idwbuff(1:3)
     $:GPU_DECLARE(create='[idwbuff]')
-
-    !> @name The number of fluids, along with their identifying indexes, respectively, for which viscous effects, e.g. the shear
-    !! and/or the volume Reynolds (Re) numbers, will be non-negligible.
-    !> @{
-    integer, dimension(2)                :: Re_size
-    integer                              :: Re_size_max
-    integer, allocatable, dimension(:,:) :: Re_idx
-    !> @}
-
-    $:GPU_DECLARE(create='[Re_size, Re_size_max, Re_idx]')
 
     !> @name Herschel-Bulkley non-Newtonian viscosity: per-fluid flags and parameter arrays.
     !> @{
@@ -160,14 +183,17 @@ module m_global_parameters
 
     !> @name The coordinate direction indexes and flags (flg), respectively, for which the configurations will be determined with
     !! respect to a working direction and that will be used to isolate the contributions, in that direction, in the dimensionally
-    !! split system of equations.
+    !! split system of equations. Declared here rather than in m_global_parameters_common so the hot dimensionally-split kernels
+    !! (Riemann solvers) read them from their own module: use-associating them from common costs ~18 kB/work-item of register spill
+    !! on AMD OpenMP offload. Common code takes the mapping as explicit arguments instead.
     !> @{
     integer, dimension(3)  :: dir_idx
     real(wp), dimension(3) :: dir_flg
-    integer, dimension(3)  :: dir_idx_tau  !< used for hypoelasticity=true
+    integer, dimension(3)  :: dir_idx_tau  !< (nn, nt, nt2) stress indices for wave speeds and momentum flux
+    integer, dimension(6)  :: stress_perm  !< Full tensor permutation: local basis -> physical storage index
     !> @}
 
-    $:GPU_DECLARE(create='[dir_idx, dir_flg, dir_idx_tau]')
+    $:GPU_DECLARE(create='[dir_idx, dir_flg, dir_idx_tau, stress_perm]')
 
     integer :: buff_size  !< Number of ghost cells for boundary condition storage
     $:GPU_DECLARE(create='[buff_size]')
@@ -189,7 +215,7 @@ module m_global_parameters
     !> @}
     $:GPU_DECLARE(create='[fd_coeff_x, fd_coeff_y, fd_coeff_z]')
 
-    ! probe, integral: auto-generated in generated_decls.fpp
+    ! probe: auto-generated in generated_decls.fpp
 
     !> @name Reference density and pressure for Tait EOS
     !> @{
@@ -260,9 +286,6 @@ module m_global_parameters
     !> @{
     !> @}
 
-    real(wp), allocatable, dimension(:) :: gammas, gs_min, pi_infs, ps_inf, cvs, qvs, qvps
-    $:GPU_DECLARE(create='[gammas, gs_min, pi_infs, ps_inf, cvs, qvs, qvps]')
-
     real(wp)                                    :: mytime     !< Current simulation time
     real(wp)                                    :: finaltime  !< Final simulation time
     type(pres_field), allocatable, dimension(:) :: pb_ts
@@ -273,6 +296,16 @@ module m_global_parameters
     !> @name lagrangian subgrid bubble parameters
     !> lag_params: auto-generated in generated_decls.fpp
     !> @{!
+    ! lag_params (decl + GPU_DECLARE) auto-generated in generated_decls.fpp; bubbles_lagrange GPU-declared in
+    ! m_global_parameters_common
+    integer :: n_el_bubs_loc, n_el_bubs_glb  !< Number of Lagrangian bubbles (local and global)
+    logical :: moving_lag_bubbles
+    logical :: lag_pressure_force
+    logical :: lag_gravity_force
+    integer :: lag_vel_model, lag_drag_model
+    $:GPU_DECLARE(create='[n_el_bubs_loc, n_el_bubs_glb]')
+    $:GPU_DECLARE(create='[moving_lag_bubbles, lag_vel_model, lag_drag_model]')
+    $:GPU_DECLARE(create='[lag_pressure_force, lag_gravity_force]')
     !> @}
 
     !> @name Continuum damage model parameters
@@ -291,7 +324,7 @@ contains
 
         integer :: i, j  !< Generic loop iterator
 
-        ! Shared defaults (case_dir, m/n/p, cyl_coord, cfl flags, model_eqns, elasticity, BC blocks,
+        ! Shared defaults (case_dir, m/n/p, cyl_coord, cfl flags, model_eqns, BC blocks,
         ! recon/weno/muscl/num_fluids/igr/mhd/relativity under case-opt guard, Tait EOS, bubble flags,
         ! IB flags, parallel I/O flags, fft_wrt)
 
@@ -326,6 +359,7 @@ contains
         dt = dflt_real
         cfl_dt = .false.
         cfl_target = dflt_real
+        ramp_ratio = dflt_real
 
         t_step_stop = dflt_int
         t_step_save = dflt_int
@@ -348,20 +382,22 @@ contains
         mp_weno = .false.
         weno_avg = .false.
         weno_Re_flux = .false.
-        riemann_solver = dflt_int
+        riemann_hypo_ADC = .false.
+        ADC_kappa = 1.0_wp
+        hll_u_interface = .false.
+        hypo_hll_interface_rhs = .false.
+        hypo_nc_mode = hypo_nc_mode_none
+        adv_src_mode = adv_src_mode_unset
+        use_nc_iface_vel = .false.
         low_Mach = 0
         wave_speeds = dflt_int
-        avg_state = dflt_int
-        alt_soundspeed = .false.
         null_weights = .false.
-        mixture_err = .false.
         precision = 2
         palpha_eps = dflt_real
         ptgalpha_eps = dflt_real
         int_comp = 0
         ic_eps = dflt_ic_eps
         ic_beta = dflt_ic_beta
-        hyper_model = dflt_int
         rdma_mpi = .false.
         shear_stress = .false.
         bulk_stress = .false.
@@ -377,7 +413,6 @@ contains
             wenoz_q = dflt_real
             igr_order = dflt_int
             igr_pres_lim = .false.
-            viscous = .false.
             igr_iter_solver = 1
         #:endif
 
@@ -386,21 +421,61 @@ contains
         chem_params%gamma_method = 1
         chem_params%transport_model = 1
 
+        chem_params%reaction_substeps = 0
+        chem_params%adap_substeps = .false.
+        chem_params%reaction_substeps_max = 0
+
         num_bc_patches = 0
         bc_io = .false.
+        periodic_bc = .false.
 
-        x_domain%beg = dflt_real; x_domain%end = dflt_real
-        y_domain%beg = dflt_real; y_domain%end = dflt_real
-        z_domain%beg = dflt_real; z_domain%end = dflt_real
+        ! bc_x/y/z (incl. vb/ve loop) already defaulted above; glb_bounds is #1290's grid-derived global extent
+        glb_bounds(1)%beg = dflt_real; glb_bounds(1)%end = dflt_real
+        glb_bounds(2)%beg = dflt_real; glb_bounds(2)%end = dflt_real
+        glb_bounds(3)%beg = dflt_real; glb_bounds(3)%end = dflt_real
+
+        bf_spatial_support = .false.
+        spatial_bf%amp = 0._wp
+        spatial_bf%x_centroid = 0._wp
+        spatial_bf%y_centroid = 0._wp
+        spatial_bf%conv_vel = 0._wp
+        spatial_bf%sigma = 0._wp
+        do i = 1, 8
+            spatial_bf%freq(i) = 0._wp
+            spatial_bf%phase(i) = 0._wp
+        end do
 
         ! Fluids physical parameters (sim-specific; Re(:) and G=0._wp differ from post)
         do i = 1, num_fluids_max
+            fluid_pp(i)%eos = eos_stiffened_gas
+            fluid_pp(i)%mg_rho0 = dflt_real
+            fluid_pp(i)%mg_c0 = dflt_real
+            fluid_pp(i)%mg_s = dflt_real
+            fluid_pp(i)%mg_gruneisen = dflt_real
+            fluid_pp(i)%mg_gruneisen_a = 0._wp
+            fluid_pp(i)%mg_t0 = 0._wp
+            fluid_pp(i)%mg_s2 = 0._wp
+            fluid_pp(i)%mg_s3 = 0._wp
+            fluid_pp(i)%jwl_a = dflt_real
+            fluid_pp(i)%jwl_b = dflt_real
+            fluid_pp(i)%jwl_r1 = dflt_real
+            fluid_pp(i)%jwl_r2 = dflt_real
+            fluid_pp(i)%jwl_omega = dflt_real
+            fluid_pp(i)%jwl_rho0 = dflt_real
+            fluid_pp(i)%jwl_t0 = 0._wp
+            fluid_pp(i)%vinet_k0 = dflt_real
+            fluid_pp(i)%vinet_k0p = dflt_real
+            fluid_pp(i)%vinet_rho0 = dflt_real
+            fluid_pp(i)%vinet_gruneisen = dflt_real
+            fluid_pp(i)%vinet_gruneisen_a = 0._wp
+            fluid_pp(i)%vinet_t0 = 0._wp
             fluid_pp(i)%gamma = dflt_real
             fluid_pp(i)%pi_inf = dflt_real
             fluid_pp(i)%cv = 0._wp
             fluid_pp(i)%qv = 0._wp
             fluid_pp(i)%qvp = 0._wp
             fluid_pp(i)%Re(:) = dflt_real
+            fluid_pp(i)%k_therm = 0._wp
             fluid_pp(i)%G = 0._wp
             fluid_pp(i)%non_newtonian = .false.
             fluid_pp(i)%K = dflt_real
@@ -436,12 +511,15 @@ contains
         bub_pp%R_g = dflt_real; R_g = dflt_real
 
         ! Immersed Boundaries (sim-specific extras)
-        ib_neighborhood_radius = 1
+        ib_neighborhood_radius = 0
         collision_model = 0
+        collision_temporal_resolution = 0
         coefficient_of_restitution = dflt_real
         collision_time = dflt_real
         ib_coefficient_of_friction = dflt_real
         ib_state_wrt = .false.
+        ib_force_wrt = .false.
+        ib_force_stride = 1
         many_ib_patch_parallelism = .false.
 
         ! Bubble modeling (sim-specific)
@@ -521,9 +599,7 @@ contains
 
         fd_order = dflt_int
         probe_wrt = .false.
-        integral_wrt = .false.
         num_probes = dflt_int
-        num_integrals = dflt_int
 
         do i = 1, num_probes_max
             probe(i)%x = dflt_real
@@ -531,20 +607,14 @@ contains
             probe(i)%z = dflt_real
         end do
 
-        do i = 1, num_probes_max
-            integral(i)%xmin = dflt_real
-            integral(i)%xmax = dflt_real
-            integral(i)%ymin = dflt_real
-            integral(i)%ymax = dflt_real
-            integral(i)%zmin = dflt_real
-            integral(i)%zmax = dflt_real
-        end do
-
         ! GRCBC flags
         #:for dir in ['x', 'y', 'z']
             bc_${dir}$%grcbc_in = .false.
             bc_${dir}$%grcbc_out = .false.
             bc_${dir}$%grcbc_vel_out = .false.
+            bc_${dir}$%vel_in_ramp = 0._wp
+            bc_${dir}$%vel_in_t0 = 0._wp
+            bc_${dir}$%vel_in_frac0 = 0._wp
         #:endfor
 
         ! Lagrangian subgrid bubble model
@@ -556,10 +626,20 @@ contains
         lag_params%massTransfer_model = .false.
         lag_params%write_bubbles = .false.
         lag_params%write_bubbles_stats = .false.
+        lag_params%write_void_evol = .false.
         lag_params%nBubs_glb = dflt_int
+        lag_params%vel_model = dflt_int
+        lag_params%drag_model = dflt_int
+        lag_params%pressure_force = .true.
+        lag_params%gravity_force = .false.
+        lag_params%kahan_summation = .true.
         lag_params%epsilonb = 1._wp
         lag_params%charwidth = dflt_real
+        lag_params%charNz = dflt_int
         lag_params%valmaxvoid = dflt_real
+        lag_params%input_path = 'input/lag_bubbles.dat'
+        moving_lag_bubbles = .false.
+        lag_vel_model = dflt_int
 
         ! Continuum damage model
         tau_star = dflt_real
@@ -590,9 +670,14 @@ contains
             particle_cloud(i)%radius = dflt_real
             particle_cloud(i)%mass = dflt_real
             particle_cloud(i)%min_spacing = 0._wp
+            particle_cloud(i)%shell_inner_radius = dflt_real
+            particle_cloud(i)%shell_outer_radius = dflt_real
             particle_cloud(i)%moving_ibm = 0
             particle_cloud(i)%seed = 0
+            particle_cloud(i)%cloud_geometry = 1
+            particle_cloud(i)%shell_axis = 3
             particle_cloud(i)%packing_method = dflt_int
+            particle_cloud(i)%periodic = 0
         end do
 
         do i = 1, num_ib_patches_max_namelist
@@ -608,12 +693,28 @@ contains
             patch_ib(i)%airfoil_id = 0
             patch_ib(i)%model_id = 0
             patch_ib(i)%slip = .false.
+            patch_ib(i)%v_blow = 0._wp
+            patch_ib(i)%inj_species = 0
+            patch_ib(i)%burn_rate_exp = 0._wp
+            patch_ib(i)%burn_rate_pref = 0._wp
 
             ! Variables to handle moving immersed boundaries, defaulting to no movement
             patch_ib(i)%moving_ibm = 0
             patch_ib(i)%vel(:) = 0._wp
             patch_ib(i)%angles(:) = 0._wp
             patch_ib(i)%angular_vel(:) = 0._wp
+            patch_ib(i)%kin_model = 0
+            patch_ib(i)%kin_hinge(:) = 0._wp
+            patch_ib(i)%kin_offset(:) = 0._wp
+            patch_ib(i)%kin_phi0 = 0._wp
+            patch_ib(i)%kin_theta0 = 0._wp
+            patch_ib(i)%kin_theta_mean = 0._wp
+            patch_ib(i)%kin_freq = 0._wp
+            patch_ib(i)%kin_phase = 0._wp
+            patch_ib(i)%kin_t0 = 0._wp
+            patch_ib(i)%kin_ramp = 0._wp
+            patch_ib(i)%kin_pitch_rate = 0._wp
+            patch_ib(i)%kin_smooth = 0._wp
             patch_ib(i)%mass = dflt_real
             patch_ib(i)%moment = dflt_real
             patch_ib(i)%centroid_offset(:) = 0._wp
@@ -696,12 +797,12 @@ contains
         Re_size = 0
         Re_size_max = 0
 
-        ! Populate eqn_idx, sys_size, b_size, tensor_size, elasticity, shear_* (shared logic)
-        call s_initialize_eqn_idx(nmom, nb)
+        ! Populate eqn_idx, sys_size, shear_* (shared logic)
+        call s_initialize_eqn_idx(nmom, nb, six_eqn_alf_is_advected=.true.)
 
         ! sim-only: GPU update for shear state after s_initialize_eqn_idx populated it
         if (model_eqns == model_eqns_5eq .or. model_eqns == model_eqns_6eq) then
-            if (hypoelasticity .or. hyperelasticity) then
+            if (hypoelasticity) then
                 $:GPU_UPDATE(device='[shear_num, shear_indices, shear_BC_flip_num, shear_BC_flip_indices]')
             end if
         end if
@@ -744,27 +845,6 @@ contains
                     end if
                 end do
             end if
-        end if
-
-        if (model_eqns == model_eqns_4eq .and. bubbles_euler) then
-            @:ALLOCATE(qbmm_idx%rs(nb), qbmm_idx%vs(nb))
-            @:ALLOCATE(qbmm_idx%ps(nb), qbmm_idx%ms(nb))
-
-            do i = 1, nb
-                if (polytropic) then
-                    fac = 2
-                else
-                    fac = 4
-                end if
-
-                qbmm_idx%rs(i) = eqn_idx%bub%beg + (i - 1)*fac
-                qbmm_idx%vs(i) = qbmm_idx%rs(i) + 1
-
-                if (.not. polytropic) then
-                    qbmm_idx%ps(i) = qbmm_idx%vs(i) + 1
-                    qbmm_idx%ms(i) = qbmm_idx%ps(i) + 1
-                end if
-            end do
         end if
 
         ! sim-only: Re_idx (non-gamma-law models only)
@@ -866,12 +946,40 @@ contains
 
         if (ib) allocate (MPI_IO_IB_DATA%var%sf(0:m,0:n,0:p))
 
-        if (elasticity .or. mhd .or. probe_wrt .or. ib) then
+        if (hypoelasticity .or. mhd .or. probe_wrt .or. ib .or. bubbles_lagrange) then
             fd_number = max(1, fd_order/2)
         end if
 
+        hypo_nc_mode = hypo_nc_mode_none
+        if (hypoelasticity) then
+            if (riemann_solver == 1) then
+                if (hypo_hll_interface_rhs) then
+                    hypo_nc_mode = hypo_nc_mode_interface
+                else
+                    hypo_nc_mode = hypo_nc_mode_finite_diff
+                end if
+            else if (riemann_solver == 2) then
+                hypo_nc_mode = hypo_nc_mode_interface
+            else if (riemann_solver == 4) then
+                hypo_nc_mode = hypo_nc_mode_dual_pass
+            end if
+        end if
+
+        ! flux_src: choose exactly one export mode (adv_src_mode) for the NC volume fraction advection term.
+        if (riemann_solver == 1 .and. .not. hll_u_interface) then
+            ! HLL Method 1 (alpha-interface): flux_src(adv_idx%beg:adv_idx%end) carries interface alpha_k per fluid.
+            adv_src_mode = adv_src_mode_alpha_iface
+        else if ((riemann_solver == 1 .and. hll_u_interface) .or. riemann_solver == 2 .or. riemann_solver == 3 &
+                 & .or. riemann_solver == 5) then
+            ! HLLC, HLL Method 2 (u-interface), exact, LF: flux_src(adv_idx%beg) carries one shared face-normal velocity.
+            adv_src_mode = adv_src_mode_vel_iface
+        else if (riemann_solver == 4) then
+            ! MHD HLLD: single species, no volume fraction to advect. Hypo HLLD: the dual-pass keeps all NC terms in the flux.
+            adv_src_mode = adv_src_mode_none
+        end if
+
         call s_configure_coordinate_bounds(recon_type, weno_polyn, muscl_polyn, igr_order, buff_size, idwint, idwbuff, viscous, &
-                                           & bubbles_lagrange, m, n, p, num_dims, igr, ib)
+                                           & bubbles_lagrange, m, n, p, num_dims, igr, ib, fd_number)
         $:GPU_UPDATE(device='[idwint, idwbuff]')
 
         ! Configuring Coordinate Direction Indexes
@@ -889,19 +997,29 @@ contains
             grid_geometry = 3
         end if
 
-        $:GPU_UPDATE(device='[sys_size, buff_size, eqn_idx, adv_n, adap_dt, pi_fac, adap_dt_tol, adap_dt_max_iters]')
-        $:GPU_UPDATE(device='[b_size, tensor_size]')
+        ! nc_iface_vel: use_nc_iface_vel enables a second export channel. Use it when the Riemann solver must expose interface
+        ! velocities beyond what flux_src already provides:
+        !
+        ! 1. adv_src_mode_alpha_iface + alt_soundspeed: face-normal velocity only, for the KdivU correction (flux_src already
+        ! carries alpha in this mode) 2. hypo_nc_mode_interface: all components for the hypoelastic velocity-gradient tensor
+        ! 3. hypo_nc_mode_dual_pass + axisym: anchored radial face traces for the cylindrical completion (both velocity
+        ! components are exported per face; the completion consumes the radial one from each pass)
+        use_nc_iface_vel = hypo_nc_mode == hypo_nc_mode_interface .or. (hypo_nc_mode == hypo_nc_mode_dual_pass &
+            & .and. grid_geometry == 2) .or. (adv_src_mode == adv_src_mode_alpha_iface .and. alt_soundspeed)
 
+        $:GPU_UPDATE(device='[sys_size, buff_size, eqn_idx, adv_n, adap_dt, pi_fac, adap_dt_tol, adap_dt_max_iters]')
         $:GPU_UPDATE(device='[cfl_target, m, n, p]')
 
         $:GPU_UPDATE(device='[alt_soundspeed, acoustic_source, num_source]')
-        $:GPU_UPDATE(device='[dt, sys_size, buff_size, pref, rhoref, eqn_idx, mpp_lim, bubbles_euler, hypoelasticity, &
-                     & alt_soundspeed, avg_state, model_eqns, mixture_err, grid_geometry, cyl_coord, mp_weno, weno_eps, teno_CT, &
-                     & hyperelasticity, hyper_model, elasticity, low_Mach]')
+        $:GPU_UPDATE(device='[dt, sys_size, buff_size, eqn_idx, mpp_lim, bubbles_euler, hypoelasticity, alt_soundspeed, &
+                     & avg_state, model_eqns, mixture_err, grid_geometry, cyl_coord, mp_weno, weno_eps, teno_CT, low_Mach]')
+        $:GPU_UPDATE(device='[riemann_hypo_ADC, ADC_kappa, hll_u_interface, hypo_hll_interface_rhs, hypo_nc_mode]')
 
         $:GPU_UPDATE(device='[Bx0]')
 
         $:GPU_UPDATE(device='[chem_params]')
+
+        $:GPU_UPDATE(device='[rburn]')
 
         $:GPU_UPDATE(device='[cont_damage, tau_star, cont_damage_s, alpha_bar]')
 
@@ -918,7 +1036,7 @@ contains
 
         $:GPU_UPDATE(device='[int_comp, ic_eps, ic_beta]')
         $:GPU_UPDATE(device='[muscl_eps]')
-        $:GPU_UPDATE(device='[dir_idx, dir_flg, dir_idx_tau]')
+        $:GPU_UPDATE(device='[dir_idx, dir_flg, dir_idx_tau, stress_perm]')
 
         $:GPU_UPDATE(device='[relax, relax_model, palpha_eps, ptgalpha_eps]')
 
@@ -959,7 +1077,11 @@ contains
     !> Initializes parallel infrastructure
     impure subroutine s_initialize_parallel_io
 
+        ! proc_coords/start_idx/mpiiofs/mpi_info_int setup moved into the shared routine
         call s_initialize_parallel_io_common
+
+        ! #1290: per-rank physical comm-domain bounds for Lagrangian-bubble exchange
+        @:ALLOCATE(pcomm_coords(1:num_dims))
 
     end subroutine s_initialize_parallel_io
 
@@ -989,6 +1111,8 @@ contains
             end if
         end if
 
+        @:DEALLOCATE(pcomm_coords)
+
         ! Shared: deallocate proc_coords and start_idx
         call s_finalize_global_parameters_common
 
@@ -1017,6 +1141,10 @@ contains
 
         if (p == 0) return
         @:DEALLOCATE(z_cb, z_cc, dz)
+
+        if (allocated(neighbor_ranks)) then
+            @:DEALLOCATE(neighbor_ranks)
+        end if
 
     end subroutine s_finalize_global_parameters_module
 

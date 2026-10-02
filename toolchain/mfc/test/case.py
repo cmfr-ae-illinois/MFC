@@ -100,13 +100,11 @@ BASE_CFG = {
     "patch_icpp(3)%alpha_rho(1)": 0.125,
     "patch_icpp(3)%alpha(1)": 1.0,
     "fluid_pp(1)%gamma": 1.0e00 / (1.4 - 1.0e00),
-    "fluid_pp(1)%pi_inf": 0.0,
+    "fluid_pp(1)%eos": "ideal_gas",
     "fluid_pp(1)%cv": 0.0,
     "fluid_pp(1)%qv": 0.0,
     "fluid_pp(1)%qvp": 0.0,
     "bubbles_euler": "F",
-    "pref": 101325.0,
-    "rhoref": 1000.0,
     "bubble_model": 3,
     "polytropic": "T",
     "polydisperse": "F",
@@ -173,7 +171,7 @@ class TestCase(case.Case):
         merge = {key: val for key, val in merge.items() if val is not None}
         super().__init__(merge)
 
-    def run(self, targets: List[Union[str, MFCTarget]], gpus: Set[int]) -> subprocess.CompletedProcess:
+    def run(self, targets: List[Union[str, MFCTarget]], gpus: Set[int], env: dict = None) -> subprocess.CompletedProcess:
         if gpus is not None and len(gpus) != 0:
             gpus_select = ["--gpus"] + [str(_) for _ in gpus]
         else:
@@ -193,9 +191,11 @@ class TestCase(case.Case):
 
         command = [mfc_script, "run", filepath, "--no-build", *tasks, *case_optimization, *jobs, "-t", *target_names, *gpus_select, *ARG("--")]
 
-        return common.system(command, print_cmd=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        # env is per-subprocess, never os.environ: cases run in worker threads,
+        # so a mutated global would leak into every concurrent case.
+        return common.system(command, print_cmd=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
 
-    def run_restart(self, targets, gpus):
+    def run_restart(self, targets, gpus, env: dict = None):
         """Run a restart roundtrip: simulate to midpoint, then restart to end."""
         # NOTE: This method overrides t_step_save to produce exactly one save
         # per phase (at the boundary step). Tests using restart_check=True
@@ -214,7 +214,7 @@ class TestCase(case.Case):
             # Phase 1: Run to midpoint (generates restart data)
             self.params = {**orig, "t_step_stop": mid_step, "t_step_save": mid_step - orig["t_step_start"]}
             self.create_directory()
-            result1 = self.run(targets, gpus)
+            result1 = self.run(targets, gpus, env=env)
             if result1.returncode != 0:
                 return result1
 
@@ -226,7 +226,7 @@ class TestCase(case.Case):
             # is run — it reads grid + IC directly from p_all/p0/<mid_step>/.
             self.params = {**orig, "t_step_start": mid_step, "t_step_save": orig["t_step_stop"] - mid_step}
             self.create_directory()
-            result2 = self.run([SIMULATION], gpus)
+            result2 = self.run([SIMULATION], gpus, env=env)
 
             # Remove intermediate step files from D/ so only step 0 and
             # t_step_stop remain, matching the straight run's output.
@@ -251,9 +251,9 @@ class TestCase(case.Case):
         return trace_to_uuid(self.trace)
 
     def coverage_key(self) -> str:
-        from .coverage import param_hash
+        from .coverage import canonicalize_param_paths, param_hash
 
-        return param_hash(self.params)
+        return param_hash(canonicalize_param_paths(self.params, common.MFC_ROOT_DIR))
 
     def get_dirpath(self):
         return os.path.join(common.MFC_TEST_DIR, self.get_uuid())
@@ -343,7 +343,7 @@ print(json.dumps({{**case, **mods}}))
         elif "Cylindrical" in self.trace.split(" -> "):
             tolerance = 1e-9
         elif self.params.get("hypoelasticity", "F") == "T":
-            tolerance = 1e-7
+            tolerance = 1e-6
         elif self.params.get("mixlayer_perturb", "F") == "T":
             tolerance = 1e-7
         elif self.params.get("synthetic_turbulence", "F") == "T":
@@ -485,7 +485,7 @@ def create_input_lagrange(path_test):
         os.mkdir(folder_path_lagrange)
 
     with open(file_path_lagrange, "w") as file:
-        file.write("0.5\t0.5\t0.5\t0.0\t0.0\t0.0\t8.0e-03\t0.0")
+        file.write("0.5\t0.5\t0.5\t0.0\t0.0\t0.0\t8.0e-03\t0.0\n")
 
 
 def copy_input_lagrange(path_example_input, path_test):

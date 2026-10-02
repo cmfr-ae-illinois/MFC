@@ -13,6 +13,7 @@ module m_start_up
     use m_mpi_proxy
     use m_mpi_common
     use m_variables_conversion
+    use m_eos
     use m_weno
     use m_muscl
     use m_thinc
@@ -22,13 +23,13 @@ module m_start_up
     use m_boundary_io
     use m_acoustic_src
     use m_rhs
+    use m_pressure_relaxation, only: s_report_pressure_relaxation
     use m_chemistry
     use m_data_output
     use m_time_steppers
     use m_qbmm
     use m_derived_variables
     use m_hypoelastic
-    use m_hyperelastic
     use m_phase_change
     use m_viscous
     use m_bubbles_EE
@@ -43,7 +44,6 @@ module m_start_up
     use m_ibm
     use m_ib_patches
     use m_model
-    use m_particle_cloud
     use m_collisions
     use m_compile_specific
     use m_checker_common
@@ -106,7 +106,7 @@ contains
 
             close (1)
 
-            if ((bf_x) .or. (bf_y) .or. (bf_z)) then
+            if ((bf_x) .or. (bf_y) .or. (bf_z) .or. (bf_spatial_support)) then
                 bodyForces = .true.
             end if
 
@@ -121,6 +121,10 @@ contains
             if (any((/bc_x%beg, bc_x%end, bc_y%beg, bc_y%end, bc_z%beg, bc_z%end/) == -17) .or. num_bc_patches > 0) then
                 bc_io = .true.
             end if
+
+            if (bc_x%beg == BC_PERIODIC .and. bc_x%end == BC_PERIODIC) periodic_bc(1) = .true.
+            if (bc_y%beg == BC_PERIODIC .and. bc_y%end == BC_PERIODIC) periodic_bc(2) = .true.
+            if (bc_z%beg == BC_PERIODIC .and. bc_z%end == BC_PERIODIC) periodic_bc(3) = .true.
         else
             call s_mpi_abort(trim(file_path) // ' is missing. Exiting.')
         end if
@@ -141,7 +145,7 @@ contains
             call s_mpi_abort(trim(file_path) // ' is missing. Exiting.')
         end if
 
-        call s_check_inputs_common()
+        call s_check_inputs_common(check_total_cells=.false., n_global=0_8)
         call s_check_inputs()
 
     end subroutine s_check_input_file
@@ -231,7 +235,7 @@ contains
             end if
         end do
 
-        if (bubbles_euler .or. elasticity) then
+        if (bubbles_euler .or. hypoelasticity) then
             ! Read pb and mv for non-polytropic qbmm
             if (qbmm .and. .not. polytropic) then
                 do i = 1, nb
@@ -306,15 +310,15 @@ contains
         if (file_exist) then
             data_size = m_glb + 2
             call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+            call s_check_mpi_file_open(ierr, file_loc)
             call MPI_FILE_READ(ifile, x_cb_glb, data_size, mpi_p, status, ierr)
             call MPI_FILE_CLOSE(ifile, ierr)
         else
             call s_mpi_abort('File ' // trim(file_loc) // ' is missing. Exiting.')
         end if
 
-        x_cb(-1:m) = x_cb_glb((start_idx(1) - 1):(start_idx(1) + m))
-        dx(0:m) = x_cb(0:m) - x_cb(-1:m - 1)
-        x_cc(0:m) = x_cb(-1:m - 1) + dx(0:m)/2._wp
+        call s_apply_grid_from_global_dim(x_cb_glb, m_glb, m, start_idx(1), bc_x%beg, bc_x%end, buff_size, buff_size, buff_size, &
+                                          & buff_size, x_cb, x_cc, dx)
 
         if (n > 0) then
             file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'y_cb.dat'
@@ -323,15 +327,15 @@ contains
             if (file_exist) then
                 data_size = n_glb + 2
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
                 call MPI_FILE_READ(ifile, y_cb_glb, data_size, mpi_p, status, ierr)
                 call MPI_FILE_CLOSE(ifile, ierr)
             else
                 call s_mpi_abort('File ' // trim(file_loc) // ' is missing. Exiting.')
             end if
 
-            y_cb(-1:n) = y_cb_glb((start_idx(2) - 1):(start_idx(2) + n))
-            dy(0:n) = y_cb(0:n) - y_cb(-1:n - 1)
-            y_cc(0:n) = y_cb(-1:n - 1) + dy(0:n)/2._wp
+            call s_apply_grid_from_global_dim(y_cb_glb, n_glb, n, start_idx(2), bc_y%beg, bc_y%end, buff_size, buff_size, &
+                                              & buff_size, buff_size, y_cb, y_cc, dy)
 
             if (p > 0) then
                 file_loc = trim(case_dir) // '/restart_data' // trim(mpiiofs) // 'z_cb.dat'
@@ -340,15 +344,15 @@ contains
                 if (file_exist) then
                     data_size = p_glb + 2
                     call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                    call s_check_mpi_file_open(ierr, file_loc)
                     call MPI_FILE_READ(ifile, z_cb_glb, data_size, mpi_p, status, ierr)
                     call MPI_FILE_CLOSE(ifile, ierr)
                 else
                     call s_mpi_abort('File ' // trim(file_loc) // 'is missing. Exiting.')
                 end if
 
-                z_cb(-1:p) = z_cb_glb((start_idx(3) - 1):(start_idx(3) + p))
-                dz(0:p) = z_cb(0:p) - z_cb(-1:p - 1)
-                z_cc(0:p) = z_cb(-1:p - 1) + dz(0:p)/2._wp
+                call s_apply_grid_from_global_dim(z_cb_glb, p_glb, p, start_idx(3), bc_z%beg, bc_z%end, buff_size, buff_size, &
+                                                  & buff_size, buff_size, z_cb, z_cc, dz)
             end if
         end if
 
@@ -365,14 +369,16 @@ contains
 
             if (file_exist) then
                 call MPI_FILE_OPEN(MPI_COMM_SELF, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 if (down_sample) then
-                    call s_initialize_mpi_data_ds(q_cons_vf)
+                    call s_initialize_mpi_data_ds(m_ds, n_ds, p_ds)
                 else
                     if (ib) then
-                        call s_initialize_mpi_data(q_cons_vf, ib_markers)
+                        call s_initialize_mpi_data(q_cons_vf, ib_markers=ib_markers, ib_mpi_data=MPI_IO_IB_DATA, &
+                                                   & qbmm_pb=pb_ts(1), qbmm_mv=mv_ts(1))
                     else
-                        call s_initialize_mpi_data(q_cons_vf)
+                        call s_initialize_mpi_data(q_cons_vf, qbmm_pb=pb_ts(1), qbmm_mv=mv_ts(1))
                     end if
                 end if
 
@@ -394,7 +400,7 @@ contains
                 WP_MOK = int(storage_size(0._stp)/8, MPI_OFFSET_KIND)
                 MOK = int(1._wp, MPI_OFFSET_KIND)
 
-                if (bubbles_euler .or. elasticity) then
+                if (bubbles_euler .or. hypoelasticity) then
                     do i = 1, sys_size
                         var_MOK = int(i, MPI_OFFSET_KIND)
 
@@ -441,11 +447,13 @@ contains
 
             if (file_exist) then
                 call MPI_FILE_OPEN(MPI_COMM_WORLD, file_loc, MPI_MODE_RDONLY, mpi_info_int, ifile, ierr)
+                call s_check_mpi_file_open(ierr, file_loc)
 
                 if (ib) then
-                    call s_initialize_mpi_data(q_cons_vf, ib_markers)
+                    call s_initialize_mpi_data(q_cons_vf, ib_markers=ib_markers, ib_mpi_data=MPI_IO_IB_DATA, qbmm_pb=pb_ts(1), &
+                                               & qbmm_mv=mv_ts(1))
                 else
-                    call s_initialize_mpi_data(q_cons_vf)
+                    call s_initialize_mpi_data(q_cons_vf, qbmm_pb=pb_ts(1), qbmm_mv=mv_ts(1))
                 end if
 
                 data_size = (m + 1)*(n + 1)*(p + 1)
@@ -456,7 +464,7 @@ contains
                 WP_MOK = int(storage_size(0._stp)/8, MPI_OFFSET_KIND)
                 MOK = int(1._wp, MPI_OFFSET_KIND)
 
-                if (bubbles_euler .or. elasticity) then
+                if (bubbles_euler .or. hypoelasticity) then
                     do i = 1, sys_size
                         var_MOK = int(i, MPI_OFFSET_KIND)
                         disp = m_MOK*max(MOK, n_MOK)*max(MOK, p_MOK)*WP_MOK*(var_MOK - 1)
@@ -515,6 +523,7 @@ contains
         real(wp)                                               :: qv
         real(wp), dimension(2)                                 :: Re
         real(wp)                                               :: pres, T
+        real(wp)                                               :: alpha_i, alpha_rho_i, e_i
         integer                                                :: i, j, k, l, c
         real(wp), dimension(num_species)                       :: rhoYks
         real(wp)                                               :: pres_mag
@@ -552,8 +561,10 @@ contains
                                             & T, pres_mag=pres_mag)
 
                     do i = 1, num_fluids
-                        v_vf(i + eqn_idx%int_en%beg - 1)%sf(j, k, l) = v_vf(i + eqn_idx%adv%beg - 1)%sf(j, k, &
-                             & l)*(gammas(i)*pres + pi_infs(i)) + v_vf(i + eqn_idx%cont%beg - 1)%sf(j, k, l)*qvs(i)
+                        alpha_i = v_vf(i + eqn_idx%adv%beg - 1)%sf(j, k, l)
+                        alpha_rho_i = v_vf(i + eqn_idx%cont%beg - 1)%sf(j, k, l)
+                        call s_phase_internal_energy(pres, alpha_i, alpha_rho_i, i, e_i)
+                        v_vf(i + eqn_idx%int_en%beg - 1)%sf(j, k, l) = e_i
                     end do
                 end do
             end do
@@ -568,6 +579,8 @@ contains
         real(wp), intent(inout) :: time_avg
         integer                 :: i, eta_hh, eta_mm, eta_ss
         real(wp)                :: eta_sec
+        real(wp)                :: dt_floor
+        character(len=8)        :: lim_str  !< Time-step limiter tag, e.g. ' (ICFL)'
 
         if (cfl_dt) then
             if (cfl_const_dt .and. t_step == 0) call s_compute_dt()
@@ -576,8 +589,15 @@ contains
 
             if (t_step == 0) dt_init = dt
 
-            if (dt < 1.e-3_wp*dt_init .and. cfl_adap_dt .and. proc_rank == 0) then
-                print *, "Delta t = ", dt
+            ! the collision restriction deliberately drops dt to collision_time/collision_temporal_resolution, so lower the
+            ! runaway-dt abort threshold below that cap when it is enabled
+            dt_floor = 1.e-3_wp*dt_init
+            if (collision_model > 0 .and. collision_temporal_resolution > 0) then
+                dt_floor = min(dt_floor, 1.e-3_wp*collision_time/real(collision_temporal_resolution, wp))
+            end if
+
+            if (dt < dt_floor .and. cfl_adap_dt .and. proc_rank == 0) then
+                print *, "Delta t = ", dt, " limited by ", dt_limiter
                 call s_mpi_abort("Delta t has become too small")
             end if
         end if
@@ -600,8 +620,11 @@ contains
                 eta_hh = int(eta_sec)/3600
                 eta_mm = mod(int(eta_sec), 3600)/60
                 eta_ss = mod(int(eta_sec), 60)
-                print '(" [", I3, "%] Time ", ES16.6, " dt = ", ES16.6, " @ Time Step = ", I8,  " Time Avg = ", ES16.6,  " Time/step = ", ES12.6, " ETA (HH:MM:SS) = ", I0, ":", I2.2, ":", I2.2)', &
-                    & int(ceiling(100._wp*(mytime/t_stop))), mytime, dt, t_step, wall_time_avg, wall_time, eta_hh, eta_mm, eta_ss
+                lim_str = ''
+                if (cfl_adap_dt) lim_str = ' (' // dt_limiter // ')'
+                print '(" [", I3, "%] t = ", ES11.4, " dt = ", ES11.4, A, " @ step ", I0, " t/step ", ES9.2, "s (avg ", ES9.2, "s) ETA ", I0, ":", I2.2, ":", I2.2)', &
+                    & int(ceiling(100._wp*(mytime/t_stop))), mytime, dt, trim(lim_str), t_step, wall_time, wall_time_avg, eta_hh, &
+                    & eta_mm, eta_ss
             end if
         else
             if (proc_rank == 0 .and. mod(t_step - t_step_start, t_step_print) == 0) then
@@ -609,9 +632,9 @@ contains
                 eta_hh = int(eta_sec)/3600
                 eta_mm = mod(int(eta_sec), 3600)/60
                 eta_ss = mod(int(eta_sec), 60)
-                print '(" [", I3, "%]  Time step ", I8, " of ", I0, " @ t_step = ", I8,  " Time Avg = ", ES12.6,  " Time/step= ", ES12.6, " ETA (HH:MM:SS) = ", I0, ":", I2.2, ":", I2.2)', &
+                print '(" [", I3, "%] step ", I0, " of ", I0, " (t_step ", I0, ") t/step ", ES9.2, "s (avg ", ES9.2, "s) ETA ", I0, ":", I2.2, ":", I2.2)', &
                     & int(ceiling(100._wp*(real(t_step - t_step_start)/(t_step_stop - t_step_start + 1)))), &
-                    & t_step - t_step_start + 1, t_step_stop - t_step_start + 1, t_step, wall_time_avg, wall_time, eta_hh, &
+                    & t_step - t_step_start + 1, t_step_stop - t_step_start + 1, t_step, wall_time, wall_time_avg, eta_hh, &
                     & eta_mm, eta_ss
             end if
         end if
@@ -620,6 +643,9 @@ contains
             do i = 1, sys_size
                 $:GPU_UPDATE(host='[q_cons_ts(1)%vf(i)%sf]')
             end do
+            if (bubbles_euler) then
+                $:GPU_UPDATE(host='[ptil]')
+            end if
         end if
 
         ! Total-variation-diminishing (TVD) Runge-Kutta (RK) time-steppers
@@ -708,7 +734,7 @@ contains
         integer                 :: save_count
 
         if (down_sample) then
-            call s_populate_variables_buffers(bc_type, q_cons_ts(1)%vf)
+            call s_populate_variables_buffers(bc_type, q_cons_ts(1)%vf, pb_ts(1)%sf, mv_ts(1)%sf, q_T_sf)
         end if
 
         stor = 1
@@ -760,7 +786,7 @@ contains
         if (bubbles_lagrange) then
             $:GPU_UPDATE(host='[lag_id, mtn_pos, mtn_posPrev, mtn_vel, intfc_rad, intfc_vel, bub_R0, Rmax_stats, Rmin_stats, &
                          & bub_dphidt, gas_p, gas_mv, gas_mg, gas_betaT, gas_betaC]')
-            do i = 1, nBubs
+            do i = 1, n_el_bubs_loc
                 if (ieee_is_nan(intfc_rad(i, 1)) .or. intfc_rad(i, 1) <= 0._wp) then
                     call s_mpi_abort("Bubble radius is negative or NaN, please reduce dt.")
                 end if
@@ -804,19 +830,20 @@ contains
         #:if USING_AMD
             #:for BC in [-5, -6, -7, -8, -9, -10, -11, -12, -13]
                 @:PROHIBIT(any((/bc_x%beg, bc_x%end, bc_y%beg, bc_y%end, bc_z%beg, &
-                           & bc_z%end/) == ${BC}$) .and. eqn_idx%adv%end > 20 .and. (.not. chemistry), &
-                           & "CBC module with AMD compiler requires eqn_idx%adv%end <= 20 when case optimization is turned off")
+                           & bc_z%end/) == ${BC}$) .and. eqn_idx%adv%end > 70 .and. (.not. chemistry), &
+                           & "CBC module with AMD compiler requires eqn_idx%adv%end <= 70 when case optimization is turned off")
                 @:PROHIBIT(any((/bc_x%beg, bc_x%end, bc_y%beg, bc_y%end, bc_z%beg, &
-                           & bc_z%end/) == ${BC}$) .and. sys_size > 20 .and. (chemistry), &
-                           & "CBC module with AMD compiler and chemistry requires sys_size <= 20 when case optimization is turned off")
+                           & bc_z%end/) == ${BC}$) .and. sys_size > 70 .and. (chemistry), &
+                           & "CBC module with AMD compiler and chemistry requires sys_size <= 70 when case optimization is turned off")
             #:endfor
         #:endif
         if (bubbles_euler .or. bubbles_lagrange) then
             call s_initialize_bubbles_model()
         end if
-        call s_initialize_mpi_common_module()
+        call s_initialize_mpi_common_module(exchange_all_chemistry_temperatures_in=.false., use_rdma_transport_in=rdma_mpi)
         call s_initialize_mpi_proxy_module()
-        call s_initialize_variables_conversion_module()
+        call s_initialize_eos_module()
+        call s_initialize_variables_conversion_module(enforce_density_floor=.true., preserve_qbmm_number=.true.)
         if (grid_geometry == 3) call s_initialize_fftw_module()
 
         if (bubbles_euler) call s_initialize_bubbles_EE_module()
@@ -843,7 +870,7 @@ contains
         call s_initialize_derived_variables_module()
         call s_initialize_time_steppers_module()
 
-        call s_initialize_boundary_common_module()
+        call s_initialize_boundary_common_module(use_dirichlet_buffers=.true.)
 
         if (down_sample) then
             m_ds = int((m + 1)/3) - 1
@@ -870,32 +897,42 @@ contains
             call s_read_data_files(q_cons_ts(1)%vf)
         end if
 
-        call s_populate_grid_variables_buffers()
+        block
+            type(int_bounds_info), dimension(3) :: grid_offsets
+
+            grid_offsets(:)%beg = buff_size
+            grid_offsets(:)%end = buff_size
+            if (n == 0) then
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, grid_offsets(1), grid_offsets(2), grid_offsets(3), &
+                                                       & global_bounds=glb_bounds)
+            else if (p == 0) then
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, grid_offsets(1), grid_offsets(2), grid_offsets(3), y_cb, &
+                                                       & y_cc, dy, global_bounds=glb_bounds)
+            else
+                call s_populate_grid_variables_buffers(x_cb, x_cc, dx, grid_offsets(1), grid_offsets(2), grid_offsets(3), y_cb, &
+                                                       & y_cc, dy, z_cb, z_cc, dz, glb_bounds)
+            end if
+        end block
+        $:GPU_UPDATE(device='[glb_bounds]')
+        dx_min = minval(dx)
+        if (n > 0) dy_min = minval(dy)
+        if (p > 0) dz_min = minval(dz)
 
         if (model_eqns == model_eqns_6eq) call s_initialize_internal_energy_equations(q_cons_ts(1)%vf)
         if (ib) then
-            block
-                type(ib_patch_parameters), allocatable :: particle_cloud_ibs(:)
-
-                if (cfl_dt .and. n_start > 0) then
-                    call s_read_ib_restart_data(n_start)
-                    allocate (particle_cloud_ibs(0))
-                else if (t_step_start > 0) then
-                    call s_read_ib_restart_data(t_step_start)
-                    allocate (particle_cloud_ibs(0))
-                else
-                    call s_generate_particle_clouds(particle_cloud_ibs)
-                end if
-                call s_instantiate_STL_models()
-                call s_initialize_ib_airfoils()
-                call s_reduce_ib_patch_array(particle_cloud_ibs)
-                deallocate (particle_cloud_ibs)
-            end block
-            call s_ibm_setup()
-            if (t_step_start == 0 .or. (cfl_dt .and. n_start == 0)) then
-                call s_write_ib_data_file(0)
-                call s_write_ib_state_file(0)
+            call s_instantiate_STL_models()
+            call s_initialize_ib_airfoils()
+            call s_get_neighbor_bounds()
+            if (cfl_dt .and. n_start > 0) then
+                call s_read_ib_restart_data(n_start)
+            else if (t_step_start > 0) then
+                call s_read_ib_restart_data(t_step_start)
+            else
+                call s_read_ib_restart_data(0)
             end if
+            call s_build_ib_neighborhood()
+            call s_ibm_setup()
+            if (t_step_start == 0 .or. (cfl_dt .and. n_start == 0)) call s_write_ib_data_file(0)
         end if
         if (bodyForces .or. synthetic_turbulence) call s_initialize_body_forces_module()
         if (acoustic_source) call s_precalculate_acoustic_spatial_sources()
@@ -919,10 +956,9 @@ contains
         end if
         if (int_comp > 0) call s_initialize_thinc_module()
         call s_initialize_derived_variables()
-        if (bubbles_lagrange) call s_initialize_bubbles_EL_module(q_cons_ts(1)%vf)
+        if (bubbles_lagrange) call s_initialize_bubbles_EL_module(q_cons_ts(1)%vf, bc_type)
 
         if (hypoelasticity) call s_initialize_hypoelastic_module()
-        if (hyperelasticity) call s_initialize_hyperelastic_module()
 
         if (periodic_forcing .or. particle_control) call s_initialize_additional_forcing_module()
 
@@ -999,7 +1035,9 @@ contains
 
         call s_initialize_parallel_io()
 
-        call s_mpi_decompose_computational_domain()
+        call s_mpi_decompose_computational_domain(write_silo_ghost_offsets=.false., adjust_local_domains=.false.)
+
+        bc = bc_xyz_info(bc_x, bc_y, bc_z)
 
     end subroutine s_initialize_mpi_domain
 
@@ -1022,6 +1060,8 @@ contains
         end if
 
         $:GPU_UPDATE(device='[chem_params]')
+
+        $:GPU_UPDATE(device='[rburn]')
 
         $:GPU_UPDATE(device='[R0ref, p0ref, rho0ref, ss, pv, vd, mu_l, mu_v, mu_g, gam_v, gam_g, M_v, M_g, R_v, R_g, Tw, cp_v, &
                      & cp_g, k_vl, k_gl, gam, gam_m, Eu, Ca, Web, Re_inv, Pe_c, phi_vg, phi_gv, omegaN, bubbles_euler, &
@@ -1052,10 +1092,16 @@ contains
         $:GPU_UPDATE(device='[bc_y%grcbc_in, bc_y%grcbc_out, bc_y%grcbc_vel_out]')
         $:GPU_UPDATE(device='[bc_z%grcbc_in, bc_z%grcbc_out, bc_z%grcbc_vel_out]')
 
+        $:GPU_UPDATE(device='[bc_x%vel_in_ramp, bc_x%vel_in_t0, bc_x%vel_in_frac0]')
+        $:GPU_UPDATE(device='[bc_y%vel_in_ramp, bc_y%vel_in_t0, bc_y%vel_in_frac0]')
+        $:GPU_UPDATE(device='[bc_z%vel_in_ramp, bc_z%vel_in_t0, bc_z%vel_in_frac0]')
+
         $:GPU_UPDATE(device='[bc_x%isothermal_in, bc_x%isothermal_out]')
         $:GPU_UPDATE(device='[bc_y%isothermal_in, bc_y%isothermal_out]')
         $:GPU_UPDATE(device='[bc_z%isothermal_in, bc_z%isothermal_out]')
         $:GPU_UPDATE(device='[bc_x%Twall_in, bc_x%Twall_out, bc_y%Twall_in, bc_y%Twall_out, bc_z%Twall_in, bc_z%Twall_out]')
+
+        $:GPU_UPDATE(device='[bc]')
 
         $:GPU_UPDATE(device='[relax, relax_model]')
         if (relax) then
@@ -1074,9 +1120,12 @@ contains
     !> Finalize and deallocate all simulation sub-modules in reverse initialization order
     impure subroutine s_finalize_modules
 
+        if (ib .and. ib_force_wrt) call s_close_ib_force_history()
+
+        if (model_eqns == model_eqns_6eq) call s_report_pressure_relaxation()
+
         call s_finalize_time_steppers_module()
         if (hypoelasticity) call s_finalize_hypoelastic_module()
-        if (hyperelasticity) call s_finalize_hyperelastic_module()
         call s_finalize_derived_variables_module()
         call s_finalize_data_output_module()
         call s_finalize_rhs_module()
@@ -1093,6 +1142,7 @@ contains
         end if
         if (int_comp > 0) call s_finalize_thinc_module()
         call s_finalize_variables_conversion_module()
+        call s_finalize_eos_module()
         if (grid_geometry == 3) call s_finalize_fftw_module
         call s_finalize_mpi_common_module()
         call s_finalize_global_parameters_module()
@@ -1116,198 +1166,192 @@ contains
 
     end subroutine s_finalize_modules
 
-    !> @brief Reads IB kinematic state from restart_data/ib_state.dat on restart. Rank 0 reads the last num_ibs records and
-    !! broadcasts to all ranks. Overwrites patch_ib vel, angular_vel, angles, and centroid.
+    !> @brief Fills the properties of a generated particle-cloud IB that the IB state file does not carry (geometry, mass,
+    !! moving_ibm, inert surface, identity rotation matrix, zeroed step state). This is the only place they are set - pre_process
+    !! (s_add_cloud_particle) generates only position, kinematics and radius. cloud_ib_idx is the global patch id minus the number
+    !! of namelist patches; pre_process numbers particles cloud by cloud.
+    subroutine s_assign_particle_cloud_ib_defaults(cloud_ib_idx, ib_patch)
+
+        integer, intent(in)                      :: cloud_ib_idx
+        type(ib_patch_parameters), intent(inout) :: ib_patch
+        integer                                  :: cloud_idx, idx_in_cloud
+
+        idx_in_cloud = cloud_ib_idx
+        do cloud_idx = 1, num_particle_clouds - 1
+            if (idx_in_cloud <= particle_cloud(cloud_idx)%num_particles) exit
+            idx_in_cloud = idx_in_cloud - particle_cloud(cloud_idx)%num_particles
+        end do
+
+        ib_patch%geometry = merge(2, 8, num_dims < 3)
+        ib_patch%step_x_centroid = 0._wp
+        ib_patch%step_y_centroid = 0._wp
+        ib_patch%step_z_centroid = 0._wp
+        ib_patch%step_angles(:) = 0._wp
+        ib_patch%step_vel(:) = 0._wp
+        ib_patch%step_angular_vel(:) = 0._wp
+        ib_patch%force(:) = 0._wp
+        ib_patch%torque(:) = 0._wp
+        ib_patch%centroid_offset(:) = 0._wp
+        ib_patch%rotation_matrix = 0._wp
+        ib_patch%rotation_matrix(1, 1) = 1._wp
+        ib_patch%rotation_matrix(2, 2) = 1._wp
+        ib_patch%rotation_matrix(3, 3) = 1._wp
+        ib_patch%rotation_matrix_inverse = ib_patch%rotation_matrix
+        ib_patch%mass = particle_cloud(cloud_idx)%mass
+        ib_patch%moment = dflt_real
+        ib_patch%moving_ibm = particle_cloud(cloud_idx)%moving_ibm
+        ib_patch%slip = .false.
+        ib_patch%v_blow = 0._wp
+        ib_patch%inj_species = 0
+        ib_patch%burn_rate_exp = 0._wp
+        ib_patch%burn_rate_pref = 0._wp
+        ! Selector for the prescribed-kinematics block; zero leaves the eleven kin_* reals unread.
+        ib_patch%kin_model = 0
+
+    end subroutine s_assign_particle_cloud_ib_defaults
+
+    !> @brief Loads the IBs this rank owns from the IB state file for t_step into patch_ib(1:num_ibs), all of which are local. Under
+    !! file_per_process the rank reads only its own restart_data/lustre_<t_step>/ib_state_<t_step>_<rank>.dat, which holds exactly
+    !! its IBs; otherwise every rank reads every record of restart_data/ib_state_<t_step>.dat and keeps the ones
+    !! f_local_rank_owns_location assigns it. Records carry kinematics, position and radius; every other property comes from the
+    !! namelist patch (global id <= num_ibs) or the particle cloud the IB was generated from. Written by pre_process at t_step = 0
+    !! (src/pre_process/m_data_output.fpp:s_write_ib_state_0_file) and by s_write_ib_state_file on later steps.
     impure subroutine s_read_ib_restart_data(t_step)
 
-        integer, intent(in)                  :: t_step
-        character(len=path_len + 2*name_len) :: file_loc
-        integer                              :: i, ios, file_unit, ierr
-        integer                              :: r, nlocal, gbl_id
-        integer, parameter                   :: NFIELDS_PER_IB = 20
-        real(wp)                             :: ib_buf(NFIELDS_PER_IB)
-        logical                              :: file_exist
-        character(len=10)                    :: t_step_string
+        integer, intent(in)                                  :: t_step
+        type(ib_patch_parameters), allocatable, dimension(:) :: namelist_ibs
+        character(len=path_len + 2*name_len)                 :: file_loc
+        integer                                              :: i, ios, file_unit, gbl_id, n_records
+        integer, parameter                                   :: NFIELDS_PER_IB = 20
+        real(wp)                                             :: ib_buf(NFIELDS_PER_IB)
+        character(len=10)                                    :: t_step_string
+
+        moving_immersed_boundary_flag = any(patch_ib(1:num_ibs)%moving_ibm /= 0) &
+                                            & .or. any(particle_cloud(1:num_particle_clouds)%moving_ibm /= 0)
+
+        allocate (namelist_ibs(num_ibs))
+        namelist_ibs(:) = patch_ib(1:num_ibs)
+        num_gbl_ibs = num_ibs + sum(particle_cloud(1:num_particle_clouds)%num_particles)
 
         if (file_per_process) then
             call s_int_to_str(t_step, t_step_string)
-
-            do r = 0, num_procs - 1
-                write (file_loc, '(A,I0,A,i7.7,A)') 'ib_state_', t_step, '_', r, '.dat'
-                file_loc = trim(case_dir) // '/restart_data/lustre_' // trim(t_step_string) // '/' // trim(file_loc)
-
-                inquire (FILE=trim(file_loc), EXIST=file_exist)
-                if (.not. file_exist) call s_mpi_abort('Cannot open IB state file for restart: ' // trim(file_loc))
-
-                open (newunit=file_unit, file=trim(file_loc), form='unformatted', access='stream', status='old', iostat=ios)
-                if (ios /= 0) call s_mpi_abort('Error opening IB state restart file: ' // trim(file_loc))
-
-                read (file_unit, iostat=ios) nlocal
-                if (ios /= 0) call s_mpi_abort('Error reading IB state file header: ' // trim(file_loc))
-
-                do i = 1, nlocal
-                    read (file_unit, iostat=ios) gbl_id
-                    if (ios /= 0) call s_mpi_abort('Error reading IB patch ID: ' // trim(file_loc))
-                    read (file_unit, iostat=ios) ib_buf
-                    if (ios /= 0) call s_mpi_abort('Error reading IB state data: ' // trim(file_loc))
-
-                    patch_ib(gbl_id)%vel = ib_buf(8:10)
-                    patch_ib(gbl_id)%angular_vel = ib_buf(11:13)
-                    patch_ib(gbl_id)%angles = ib_buf(14:16)
-                    patch_ib(gbl_id)%x_centroid = ib_buf(17)
-                    patch_ib(gbl_id)%y_centroid = ib_buf(18)
-                    patch_ib(gbl_id)%z_centroid = ib_buf(19)
-                end do
-
-                close (file_unit)
-            end do
+            write (file_loc, '(A,I0,A,i7.7,A)') 'ib_state_', t_step, '_', proc_rank, '.dat'
+            file_loc = trim(case_dir) // '/restart_data/lustre_' // trim(t_step_string) // '/' // trim(file_loc)
         else
             write (file_loc, '(A,I0,A)') '/restart_data/ib_state_', t_step, '.dat'
             file_loc = trim(case_dir) // trim(file_loc)
+        end if
 
-            if (proc_rank == 0) then
-                inquire (FILE=trim(file_loc), EXIST=file_exist)
-                if (.not. file_exist) then
-                    call s_mpi_abort('Cannot open IB state file for restart: ' // trim(file_loc))
-                end if
+        open (newunit=file_unit, file=trim(file_loc), form='unformatted', access='stream', status='old', action='read', iostat=ios)
+        if (ios /= 0) call s_mpi_abort('Error opening IB state file: ' // trim(file_loc))
 
-                open (newunit=file_unit, file=trim(file_loc), form='unformatted', access='stream', status='old', iostat=ios)
-                if (ios /= 0) call s_mpi_abort('Error opening IB state restart file: ' // trim(file_loc))
+        n_records = num_gbl_ibs
+        if (file_per_process) then
+            read (file_unit, iostat=ios) n_records
+            if (ios /= 0) call s_mpi_abort('Error reading IB state file header: ' // trim(file_loc))
+        end if
 
-                do i = 1, num_ibs
-                    read (file_unit, iostat=ios) ib_buf
-                    if (ios /= 0) call s_mpi_abort('Error reading IB state restart file')
+        num_ibs = 0
+        do i = 1, n_records
+            gbl_id = i
+            if (file_per_process) read (file_unit, iostat=ios) gbl_id
+            if (ios == 0) read (file_unit, iostat=ios) ib_buf
+            if (ios /= 0) call s_mpi_abort('Error reading IB state file: ' // trim(file_loc))
 
-                    patch_ib(i)%vel = ib_buf(8:10)
-                    patch_ib(i)%angular_vel = ib_buf(11:13)
-                    patch_ib(i)%angles = ib_buf(14:16)
-                    patch_ib(i)%x_centroid = ib_buf(17)
-                    patch_ib(i)%y_centroid = ib_buf(18)
-                    patch_ib(i)%z_centroid = ib_buf(19)
-                end do
-
-                close (file_unit)
+            if (.not. file_per_process) then
+                if (.not. f_local_rank_owns_location(ib_buf(17:19), glb_bounds)) cycle
             end if
 
-#ifdef MFC_MPI
-            do i = 1, num_ibs
-                call MPI_BCAST(patch_ib(i)%vel, 3, mpi_p, 0, MPI_COMM_WORLD, ierr)
-                call MPI_BCAST(patch_ib(i)%angular_vel, 3, mpi_p, 0, MPI_COMM_WORLD, ierr)
-                call MPI_BCAST(patch_ib(i)%angles, 3, mpi_p, 0, MPI_COMM_WORLD, ierr)
-                call MPI_BCAST(patch_ib(i)%x_centroid, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
-                call MPI_BCAST(patch_ib(i)%y_centroid, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
-                call MPI_BCAST(patch_ib(i)%z_centroid, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)
-            end do
-#endif
-        end if
+            num_ibs = num_ibs + 1
+            @:PROHIBIT(num_ibs > num_local_ibs_max, &
+                       & "Too many IBs on a single processor rank. Modify case file or increase limit of num_local_ibs_max to resolve.")
+            if (gbl_id <= size(namelist_ibs)) then
+                patch_ib(num_ibs) = namelist_ibs(gbl_id)
+            else
+                call s_assign_particle_cloud_ib_defaults(gbl_id - size(namelist_ibs), patch_ib(num_ibs))
+            end if
+            patch_ib(num_ibs)%gbl_patch_id = gbl_id
+            patch_ib(num_ibs)%vel = ib_buf(8:10)
+            patch_ib(num_ibs)%angular_vel = ib_buf(11:13)
+            patch_ib(num_ibs)%angles = ib_buf(14:16)
+            patch_ib(num_ibs)%x_centroid = ib_buf(17)
+            patch_ib(num_ibs)%y_centroid = ib_buf(18)
+            patch_ib(num_ibs)%z_centroid = ib_buf(19)
+            patch_ib(num_ibs)%radius = ib_buf(20)
+            local_ib_patch_ids(num_ibs) = num_ibs
+        end do
+
+        close (file_unit)
+        deallocate (namelist_ibs)
+
+        num_local_ibs = num_ibs
 
     end subroutine s_read_ib_restart_data
 
-    !> @brief Merges patch_ib (namelist patches, fixed at num_ib_patches_max_namelist) with particle_cloud_ibs (CPU-only, exact
-    !! size) and reduces to only the patches in or near the local computational domain. patch_ib is never reallocated; the local
-    !! subset is written in-place from the front. particle_cloud_ibs is owned by the caller and freed there after this returns.
-    subroutine s_reduce_ib_patch_array(particle_cloud_ibs)
-
-        type(ib_patch_parameters), intent(in), dimension(:) :: particle_cloud_ibs
-        real(wp), dimension(3)                              :: centroid
-        integer                                             :: i
-        integer                                             :: num_namelist_ibs, num_bed_ibs
-
-        num_namelist_ibs = num_ibs
-        num_bed_ibs = 0
-        do i = 1, num_particle_clouds
-            num_bed_ibs = num_bed_ibs + particle_cloud(i)%num_particles
-        end do
-
-        ! Check for moving IBs across both namelist and particle bed patches.
-        moving_immersed_boundary_flag = .false.
-        do i = 1, num_namelist_ibs
-            if (patch_ib(i)%moving_ibm /= 0) then
-                moving_immersed_boundary_flag = .true.
-                exit
-            end if
-        end do
-        if (.not. moving_immersed_boundary_flag) then
-            do i = 1, num_bed_ibs
-                if (particle_cloud_ibs(i)%moving_ibm /= 0) then
-                    moving_immersed_boundary_flag = .true.
-                    exit
-                end if
-            end do
-        end if
-
-        call get_neighbor_bounds()
-        call s_compute_ib_neighbor_ranks()
-
-        num_gbl_ibs = num_namelist_ibs + num_bed_ibs
+    !> @brief Completes this rank's IB neighborhood once s_read_ib_restart_data has loaded only the IBs it owns: every rank sends
+    !! its own IBs to, and receives the owned IBs of, each distinct rank in ib_neighbor_ranks, appending them to patch_ib after its
+    !! own.
+    subroutine s_build_ib_neighborhood()
 
 #ifdef MFC_MPI
-        if (num_procs == 1) then
-            ! single-rank: all patches are local; append particle bed entries directly into patch_ib.
-            @:PROHIBIT(num_gbl_ibs > num_ib_patches_max_namelist, &
-                       & "Total IB count exceeds patch_ib capacity. Increase num_ib_patches_max_namelist.")
-            do i = 1, num_bed_ibs
-                patch_ib(num_namelist_ibs + i) = particle_cloud_ibs(i)
-                patch_ib(num_namelist_ibs + i)%gbl_patch_id = num_namelist_ibs + i
+        integer, allocatable, dimension(:)                     :: nbr_ranks, recv_counts, requests
+        type(ib_patch_parameters), allocatable, dimension(:,:) :: recv_ibs
+        integer                                                :: i, n_nbrs, nreqs, patch_bytes, ierr
+#endif
+
+        call s_compute_ib_neighbor_ranks()
+
+#ifdef MFC_MPI
+        if (num_procs > 1) then
+            ! A rank can fill several table slots (periodicity, few ranks) or be its own neighbor; exchange once per distinct rank
+            allocate (nbr_ranks(size(ib_neighbor_ranks)))
+            nbr_ranks = reshape(ib_neighbor_ranks, [size(ib_neighbor_ranks)])
+            n_nbrs = 0
+            do i = 1, size(nbr_ranks)
+                if (nbr_ranks(i) < 0 .or. nbr_ranks(i) == proc_rank) cycle
+                if (any(nbr_ranks(1:n_nbrs) == nbr_ranks(i))) cycle
+                n_nbrs = n_nbrs + 1
+                nbr_ranks(n_nbrs) = nbr_ranks(i)
             end do
-            num_ibs = num_gbl_ibs
-            num_local_ibs = num_gbl_ibs
-            do i = 1, num_gbl_ibs
-                local_ib_patch_ids(i) = i
+
+            allocate (recv_counts(n_nbrs), requests(2*n_nbrs))
+            do i = 1, n_nbrs
+                call MPI_IRECV(recv_counts(i), 1, MPI_INTEGER, nbr_ranks(i), 500, MPI_COMM_WORLD, requests(2*i - 1), ierr)
+                call MPI_ISEND(num_local_ibs, 1, MPI_INTEGER, nbr_ranks(i), 500, MPI_COMM_WORLD, requests(2*i), ierr)
             end do
-        else
-            ! multi-rank: compact namelist patches in-place (write_idx <= read_idx, no aliasing), then append local particle beds.
-            num_ibs = 0
-            num_local_ibs = 0
-            do i = 1, num_namelist_ibs
-                centroid = [patch_ib(i)%x_centroid, patch_ib(i)%y_centroid, 0._wp]
-                if (num_dims == 3) centroid(3) = patch_ib(i)%z_centroid
-                if (f_neighborhood_ranks_own_location(centroid)) then
-                    num_ibs = num_ibs + 1
-                    patch_ib(num_ibs) = patch_ib(i)
-                    patch_ib(num_ibs)%gbl_patch_id = i
-                    if (f_local_rank_owns_location(centroid)) then
-                        num_local_ibs = num_local_ibs + 1
-                        local_ib_patch_ids(num_local_ibs) = num_ibs
-                    end if
+            call MPI_WAITALL(2*n_nbrs, requests, MPI_STATUSES_IGNORE, ierr)
+
+            patch_bytes = storage_size(patch_ib(1))/8
+            allocate (recv_ibs(max(1, maxval(recv_counts)), n_nbrs))
+            nreqs = 0
+            do i = 1, n_nbrs
+                if (recv_counts(i) > 0) then
+                    nreqs = nreqs + 1
+                    call MPI_IRECV(recv_ibs(:,i), recv_counts(i)*patch_bytes, MPI_BYTE, nbr_ranks(i), 501, MPI_COMM_WORLD, &
+                                   & requests(nreqs), ierr)
+                end if
+                if (num_local_ibs > 0) then
+                    nreqs = nreqs + 1
+                    call MPI_ISEND(patch_ib, num_local_ibs*patch_bytes, MPI_BYTE, nbr_ranks(i), 501, MPI_COMM_WORLD, &
+                                   & requests(nreqs), ierr)
                 end if
             end do
-            do i = 1, num_bed_ibs
-                centroid = [particle_cloud_ibs(i)%x_centroid, particle_cloud_ibs(i)%y_centroid, 0._wp]
-                if (num_dims == 3) centroid(3) = particle_cloud_ibs(i)%z_centroid
-                if (f_neighborhood_ranks_own_location(centroid)) then
-                    num_ibs = num_ibs + 1
-                    @:PROHIBIT(num_ibs > num_ib_patches_max_namelist, &
-                               & "Local IB count exceeds patch_ib capacity. Increase num_ib_patches_max_namelist.")
-                    patch_ib(num_ibs) = particle_cloud_ibs(i)
-                    patch_ib(num_ibs)%gbl_patch_id = num_namelist_ibs + i
-                    if (f_local_rank_owns_location(centroid)) then
-                        num_local_ibs = num_local_ibs + 1
-                        local_ib_patch_ids(num_local_ibs) = num_ibs
-                    end if
-                end if
+            call MPI_WAITALL(nreqs, requests, MPI_STATUSES_IGNORE, ierr)
+
+            do i = 1, n_nbrs
+                @:PROHIBIT(num_ibs + recv_counts(i) > num_ib_patches_max_namelist, &
+                           & "IB neighborhood exceeds patch_ib capacity. Increase num_ib_patches_max_namelist.")
+                patch_ib(num_ibs + 1:num_ibs + recv_counts(i)) = recv_ibs(1:recv_counts(i),i)
+                num_ibs = num_ibs + recv_counts(i)
             end do
-            @:PROHIBIT(num_local_ibs > num_local_ibs_max, &
-                       & "Too many IBs on a single processor rank. Modify case file or increase limit of num_local_ibs_max to resolve.")
+
+            deallocate (nbr_ranks, recv_counts, requests, recv_ibs)
         end if
-#else
-        ! no-MPI: all patches are local; append particle bed entries directly into patch_ib.
-        @:PROHIBIT(num_gbl_ibs > num_ib_patches_max_namelist, &
-                   & "Total IB count exceeds patch_ib capacity. Increase num_ib_patches_max_namelist.")
-        do i = 1, num_bed_ibs
-            patch_ib(num_namelist_ibs + i) = particle_cloud_ibs(i)
-            patch_ib(num_namelist_ibs + i)%gbl_patch_id = num_namelist_ibs + i
-        end do
-        num_ibs = num_gbl_ibs
-        num_local_ibs = num_gbl_ibs
-        do i = 1, num_gbl_ibs
-            local_ib_patch_ids(i) = i
-        end do
 #endif
 
         @:ALLOCATE(ib_gbl_idx_lookup(1:num_gbl_ibs))
 
-    end subroutine s_reduce_ib_patch_array
+    end subroutine s_build_ib_neighborhood
 
     !> Build ib_neighbor_ranks(-1:1,-1:1,-1:1): MPI ranks of all neighbor domains. Uses two rounds of MPI_SENDRECV cascades - face
     !! neighbors are known from bc_*, edge neighbors are obtained in round 1, and (3D) corner neighbors in round 2.
@@ -1467,10 +1511,10 @@ contains
 
     end subroutine s_compute_ib_neighbor_ranks
 
-    subroutine get_neighbor_bounds()
+    subroutine s_get_neighbor_bounds()
 
-        real(wp) :: beg_val, end_val, recv_val
-        integer  :: k, send_neighbor, recv_neighbor, ierr
+        real(wp) :: beg_val, end_val, recv_val, bound, max_ib_bound, local_rank_width, min_rank_width
+        integer  :: k, send_neighbor, recv_neighbor, ierr, temporary_radius
 
         ! Default: unbounded in all directions (covers single-rank and no-MPI cases)
 
@@ -1482,6 +1526,36 @@ contains
         neighbor_domain_z%end = huge(0._wp)
 
 #ifdef MFC_MPI
+        ! perform setup if we are doing automatic radius checking
+        if (ib_neighborhood_radius < 1) then
+            ib_neighborhood_radius = 0  ! ensure we are starting with 0 neighborhood radius
+
+            ! determine the maximum length of space that needs to be contained by the neighborhood
+            max_ib_bound = -1._wp
+            do k = 1, num_ibs
+                call s_get_ib_bound(patch_ib(k), bound)
+                max_ib_bound = max(max_ib_bound, bound)
+            end do
+            do k = 1, num_particle_clouds
+                max_ib_bound = max(max_ib_bound, particle_cloud(k)%radius)
+            end do
+
+            ! Narrowest rank extent, over every direction as well as every rank. The radius is a count of rank
+            ! hops, so the distance one hop covers is the extent of the rank it steps over, and the direction
+            ! needing the most hops to span the body is the one whose ranks are thinnest. Reducing over each
+            ! rank's widest extent first reports the wrong number whenever ranks are anisotropic, which is the
+            ! norm on a stretched grid or an elongated domain.
+            local_rank_width = huge(0._wp)
+            #:for X, ID, DIM in [('x', 1, 'm'), ('y', 2, 'n'), ('z', 3, 'p')]
+                if (num_dims >= ${ID}$) local_rank_width = min(local_rank_width, abs(${X}$_cb(${DIM}$) - ${X}$_cb(-1)))
+            #:endfor
+            call s_mpi_allreduce_min(local_rank_width, min_rank_width)
+
+            ! approximate the size of the neighborhood with a local 1.1x fudge factor for safety, lower bound of 1
+            ib_neighborhood_radius = max(1, ceiling(1.1_wp*max_ib_bound/(min_rank_width)))
+            if (proc_rank == 0) print *, "Automatic choice of ib_neighborhood_radius selected: ", ib_neighborhood_radius
+        end if
+
         ! For each direction, propagate the left/right boundary edges outward ib_neighborhood_radius hops. After k rounds: beg_val =
         ! left edge of the rank k hops to the left; end_val = right edge of the rank k hops to the right.
         #:for X, ID, TAG, DIM in [('x', 1, 100, 'm'), ('y', 2, 102, 'n'), ('z', 3, 104, 'p')]
@@ -1516,6 +1590,6 @@ contains
         #:endfor
 #endif
 
-    end subroutine get_neighbor_bounds
+    end subroutine s_get_neighbor_bounds
 
 end module m_start_up

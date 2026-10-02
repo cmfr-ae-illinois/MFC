@@ -1,9 +1,10 @@
 """Fortran parameter code generator — namelist and scalar decl fragments per target."""
 
+import re
 from pathlib import Path
 from typing import List, Tuple
 
-from ..definitions import CASE_OPT_PARAMS, FORTRAN_ARRAY_DIMS, NAMELIST_VARS, TYPED_DECLS  # noqa: F401 - triggers registry population
+from ..definitions import CASE_OPT_PARAMS, DECLARATION_TARGETS, FORTRAN_ARRAY_DIMS, NAMELIST_VARS, TYPED_DECLS  # noqa: F401 - triggers registry population
 from ..registry import REGISTRY
 from ..schema import ParamDef, ParamType
 
@@ -27,6 +28,99 @@ _FORTRAN_TYPES = {
 _REAL_TYPES = (ParamType.REAL, ParamType.ANALYTIC_REAL)
 
 _VALID_TARGETS = ("pre", "sim", "post")
+
+# Scalar simulation parameters whose generated declarations own device storage.
+# Case-optimization parameters are emitted by generated_case_opt_decls.fpp; all
+# other names are emitted by generated_decls.fpp.
+SIM_GPU_DECL_VARS = {
+    "ADC_kappa",
+    "Bx0",
+    "Ca",
+    "R0ref",
+    "Re_inv",
+    "Web",
+    "acoustic_source",
+    "adap_dt",
+    "adap_dt_max_iters",
+    "adap_dt_tol",
+    "adv_n",
+    "alpha_bar",
+    "alt_soundspeed",
+    "avg_state",
+    "bubble_model",
+    "bubbles_euler",
+    "bubbles_lagrange",
+    "cfl_target",
+    "cont_damage",
+    "cont_damage_s",
+    "cyl_coord",
+    "down_sample",
+    "dt",
+    "fd_order",
+    "hll_u_interface",
+    "hyper_cleaning",
+    "hyper_cleaning_speed",
+    "hyper_cleaning_tau",
+    "hypo_hll_interface_rhs",
+    "hypoelasticity",
+    "ib",
+    "ib_coefficient_of_friction",
+    "ic_beta",
+    "ic_eps",
+    "igr",
+    "igr_iter_solver",
+    "igr_order",
+    "igr_pres_lim",
+    "int_comp",
+    "low_Mach",
+    "m",
+    "mapped_weno",
+    "mixture_err",
+    "model_eqns",
+    "mp_weno",
+    "mhd",
+    "mpp_lim",
+    "muscl_eps",
+    "muscl_lim",
+    "muscl_order",
+    "muscl_polyn",
+    "n",
+    "num_dims",
+    "num_fluids",
+    "num_ibs",
+    "num_source",
+    "num_turbulent_sources",
+    "num_vels",
+    "p",
+    "palpha_eps",
+    "pi_fac",
+    "poly_sigma",
+    "polydisperse",
+    "polytropic",
+    "ptgalpha_eps",
+    "qbmm",
+    "recon_type",
+    "relativity",
+    "relax",
+    "relax_model",
+    "riemann_hypo_ADC",
+    "sigma",
+    "surface_tension",
+    "synth_U_inf",
+    "synthetic_turbulence",
+    "tau_star",
+    "teno",
+    "teno_CT",
+    "thermal",
+    "viscous",
+    "weno_eps",
+    "weno_num_stencils",
+    "weno_order",
+    "weno_polyn",
+    "wenojs",
+    "wenoz",
+    "wenoz_q",
+}
 
 
 def _check_target(target: str) -> None:
@@ -57,6 +151,12 @@ def _is_simple_scalar(name: str) -> bool:
 
 def _vars_for_target(target: str) -> List[str]:
     return sorted(v for v, ts in NAMELIST_VARS.items() if target in ts)
+
+
+def _decl_vars_for_target(target: str) -> List[str]:
+    namelist_vars = {v for v, targets in NAMELIST_VARS.items() if target in targets}
+    common_module_vars = {v for v, targets in DECLARATION_TARGETS.items() if target in targets}
+    return sorted(namelist_vars | common_module_vars)
 
 
 def _pack_namelist(vars_list: List[str], first_prefix: str, cont_prefix: str, max_line: int) -> List[str]:
@@ -111,7 +211,8 @@ def generate_decls_fpp(target: str) -> str:
     """Return Fortran declarations (scalars + known arrays) for a target."""
     _check_target(target)
     lines = [_HEADER.rstrip()]
-    for name in _vars_for_target(target):
+    declared_names = set()
+    for name in _decl_vars_for_target(target):
         if not _is_simple_scalar(name):
             continue
         if target == "sim" and name in CASE_OPT_PARAMS:
@@ -126,6 +227,7 @@ def generate_decls_fpp(target: str) -> str:
             ftype = fortran_type_decl(member)
             dim = FORTRAN_ARRAY_DIMS[name]
             lines.append(f"{(ftype + ', dimension(' + dim + ')').ljust(_ARRAY_DECL_COL)}:: {name}")
+            declared_names.add(name)
             continue
         param = REGISTRY.all_params.get(name)
         if param is None:
@@ -133,8 +235,10 @@ def generate_decls_fpp(target: str) -> str:
         if any(k.startswith(f"{name}(") for k in REGISTRY.all_params):
             raise ValueError(f"{name!r} has indexed variants (e.g. {name}(1)) but is missing from " "FORTRAN_ARRAY_DIMS. Add it there with its Fortran dimension expression.")
         lines.append(f"{fortran_type_decl(param).ljust(_DECL_COL)}:: {name}")
+        declared_names.add(name)
     for name, (ftype, dim, gpu, desc) in TYPED_DECLS.items():
-        if name not in NAMELIST_VARS or target not in NAMELIST_VARS[name]:
+        declaration_targets = NAMELIST_VARS.get(name, set()) | DECLARATION_TARGETS.get(name, set())
+        if target not in declaration_targets:
             continue
         decl = f"{ftype}, dimension({dim})" if dim else ftype
         padded = decl.ljust(_ARRAY_DECL_COL)
@@ -142,7 +246,11 @@ def generate_decls_fpp(target: str) -> str:
             padded += " "
         doc = f" !< {desc}" if desc else ""
         lines.append(f"{padded}:: {name}{doc}")
+        declared_names.add(name)
         if gpu and target == "sim":
+            lines.append(f"$:GPU_DECLARE(create='[{name}]')")
+    if target == "sim":
+        for name in sorted(SIM_GPU_DECL_VARS & declared_names):
             lines.append(f"$:GPU_DECLARE(create='[{name}]')")
     return "\n".join(lines) + "\n"
 
@@ -152,13 +260,174 @@ def generate_constants_fpp() -> str:
     from ..definitions import CONSTRAINTS
 
     lines = [_HEADER.rstrip()]
+    emitted_prefixes = set()  # e.g. fluid_pp(1..10)%eos all share fortran_prefix "eos"; emit once
     for param in sorted(CONSTRAINTS):
-        names = CONSTRAINTS[param].get("names")
+        constraint = CONSTRAINTS[param]
+        names = constraint.get("names")
         if not names:
             continue
+        # Compound keys (fluid_pp(1)%eos) do not form valid Fortran identifiers on their own;
+        # a "fortran_prefix" supplies the standalone name (eos_<name>) to emit instead.
+        prefix = constraint.get("fortran_prefix")
+        if "%" in param or "(" in param:
+            if prefix is None:
+                continue
+        else:
+            prefix = param
+        if prefix in emitted_prefixes:
+            continue
+        emitted_prefixes.add(prefix)
         for name, value in sorted(names.items(), key=lambda kv: kv[1]):
-            lines.append(f"integer, parameter :: {param}_{name} = {value}")
+            lines.append(f"integer, parameter :: {prefix}_{name} = {value}")
     return "\n".join(lines) + "\n"
+
+
+_EOS_INDENT = "    "  # macro-body indent, matching src/common/include/macros.fpp
+_EOS_CONT = "        & "  # continuation prefix for a wrapped assignment
+_EOS_WRAP = 120  # wrap a rendered assignment past this; the hard Fortran free-form limit is 132
+_EOS_CALL_RE = re.compile(r"^(\w+)\((.*)\)$")
+
+
+def _eos_case_fields() -> set:
+    """eos_coeffs fields that s_initialize_eos_module must dispatch on the family.
+
+    A field more than one family writes needs a `case` arm to pick the right source; a field a
+    single family writes has one source and can be assigned for every fluid, which is what the
+    hand-written init did (mg_c0 and friends are copied regardless of family).
+    """
+    from ..eos_families import EOS_FAMILIES
+
+    writers: dict = {}
+    for family in EOS_FAMILIES:
+        for field_name in family.eos_coeffs:
+            writers[field_name] = writers.get(field_name, 0) + 1
+    return {name for name, count in writers.items() if count > 1}
+
+
+def _eos_computed_call(family, call: str, idx: str) -> str:
+    """Resolve a Computed field's call, qualifying each argument as fluid_pp(i)%<param>."""
+    match = _EOS_CALL_RE.match(call.strip())
+    if match is None:
+        raise ValueError(f"EOS family {family.suffix}: Computed fortran_call {call!r} is not a plain <fn>(<args>) call, so its arguments cannot be qualified.")
+    known = {f"{family.prefix}_{suffix}" for suffix, _ in family.required + family.optional}
+    args = []
+    for raw in match.group(2).split(","):
+        arg = raw.strip()
+        if arg not in known:
+            raise ValueError(f"EOS family {family.suffix}: Computed fortran_call argument {arg!r} is not one of the family's parameters ({', '.join(sorted(known))}).")
+        args.append(f"fluid_pp({idx})%{arg}")
+    return f"{match.group(1)}({', '.join(args)})"
+
+
+def _eos_rhs(family, source, idx: str) -> str:
+    """The Fortran right-hand side an eos_coeffs source resolves to."""
+    from ..eos_families import Computed, FortranLiteral, Param
+
+    if isinstance(source, Param):
+        return f"fluid_pp({idx})%{family.prefix}_{source.suffix}"
+    if isinstance(source, FortranLiteral):
+        return source.fortran
+    if isinstance(source, Computed):
+        return _eos_computed_call(family, source.fortran_call, idx)
+    raise ValueError(f"EOS family {family.suffix}: unknown eos_coeffs source {source!r}.")
+
+
+def _eos_assign(indent: str, field_name: str, rhs: str, idx: str) -> List[str]:
+    """`eos_coeffs(i)%<field> = <rhs>`, split at argument boundaries if it renders too long."""
+    lhs = f"{indent}eos_coeffs({idx})%{field_name} = "
+    rendered = len(lhs.replace(f"({idx})", "(i)")) + len(rhs.replace(f"({idx})", "(i)"))
+    if rendered <= _EOS_WRAP:
+        return [lhs + rhs]
+    parts = rhs.split(", ")
+    lines, current = [], lhs + parts[0]
+    for part in parts[1:]:
+        candidate = f"{current}, {part}"
+        if len(candidate.replace(f"({idx})", "(i)")) > _EOS_WRAP:
+            lines.append(current + ", &")
+            current = _EOS_CONT + part
+        else:
+            current = candidate
+    lines.append(current)
+    return lines
+
+
+def _eos_family_test(families, idx: str) -> str:
+    """`eoss(i) == eos_a .or. eoss(i) == eos_b`, the membership test for a set of families."""
+    return " .or. ".join(f"eoss({idx}) == eos_{family.suffix}" for family in families)
+
+
+def generate_eos_fpp() -> str:
+    """Fypp macros for the mechanical parts of m_eos: the family predicates and the coefficient init.
+
+    Identical for all targets. The predicates are expression-valued, so `${MACRO('i')}$` splices
+    them into a larger condition; the init macros are statement-valued, called with `@:MACRO(i)`.
+    """
+    from ..eos_families import EOS_COEFF_DEFAULT, EOS_COEFF_DEFAULTS, EOS_FAMILIES
+
+    idx = "${i}$"
+    case_fields = _eos_case_fields()
+    # A family that skips a case-dispatched field would emit an arm leaving it uninitialised
+    # (case default is not taken when another arm matches) -- worse than a dflt_real sentinel.
+    for family in EOS_FAMILIES:
+        if family.state_dependent:
+            missing = case_fields - set(family.eos_coeffs)
+            if missing:
+                raise ValueError(f"EOS family {family.suffix!r} does not assign case-dispatched field(s) {sorted(missing)}")
+    unknown_defaults = set(EOS_COEFF_DEFAULTS) - case_fields
+    if unknown_defaults:
+        raise ValueError(f"EOS_COEFF_DEFAULTS key(s) {sorted(unknown_defaults)} are not case-dispatched fields")
+    lines = [_HEADER.rstrip()]
+    lines.append("#! Generated from EOS_FAMILIES in toolchain/mfc/params/eos_families.py.")
+    lines.append("")
+    lines.append("#! The families whose coefficients vary with density.")
+    lines.append("#:def EOS_IS_STATE_DEPENDENT(i)")
+    lines.append(_eos_family_test([f for f in EOS_FAMILIES if f.state_dependent], idx))
+    lines.append("#:enddef")
+    lines.append("")
+    lines.append("#! The families whose reference curve is itself an isentrope. Only the family half of the")
+    lines.append("#! predicate: the runtime gruneisen_a test is not a family property and stays in m_eos.fpp.")
+    lines.append("#:def EOS_HAS_ISENTROPIC_REFERENCE(i)")
+    lines.append(_eos_family_test([f for f in EOS_FAMILIES if f.isentropic_reference], idx))
+    lines.append("#:enddef")
+    lines.append("")
+    lines.append("#! Fields exactly one family writes: one source each, so every fluid gets them.")
+    lines.append("#:def EOS_INIT_COEFFS(i)")
+    for family in EOS_FAMILIES:
+        for field_name, source in family.eos_coeffs.items():
+            if field_name not in case_fields:
+                lines.extend(_eos_assign(_EOS_INDENT, field_name, _eos_rhs(family, source, idx), idx))
+    lines.append("#:enddef")
+    lines.append("")
+    lines.append("#! Fields several families write: dispatched on the family. case default is the")
+    lines.append("#! non-state-dependent families' arm.")
+    lines.append("#:def EOS_INIT_REFERENCE_STATE(i)")
+    lines.append(f"{_EOS_INDENT}select case (fluid_pp({idx})%eos)")
+    body = _EOS_INDENT * 2
+    for family in EOS_FAMILIES:
+        written = [(n, s) for n, s in family.eos_coeffs.items() if n in case_fields]
+        if not written:
+            continue
+        lines.append(f"{_EOS_INDENT}case (eos_{family.suffix})")
+        for field_name, source in written:
+            lines.extend(_eos_assign(body, field_name, _eos_rhs(family, source, idx), idx))
+    lines.append(f"{_EOS_INDENT}case default")
+    for field_name in _eos_case_field_order(case_fields):
+        lines.extend(_eos_assign(body, field_name, EOS_COEFF_DEFAULTS.get(field_name, EOS_COEFF_DEFAULT), idx))
+    lines.append(f"{_EOS_INDENT}end select")
+    lines.append("#:enddef")
+    return "\n".join(lines) + "\n"
+
+
+def _eos_case_field_order(case_fields: set) -> List[str]:
+    """The case-dispatched fields in registry order, so case default matches the arms above it."""
+    from ..eos_families import EOS_FAMILIES
+
+    order = []
+    for family in EOS_FAMILIES:
+        for field_name in family.eos_coeffs:
+            if field_name in case_fields and field_name not in order:
+                order.append(field_name)
+    return order
 
 
 # case.py-computed extras that are not CASE_OPT_PARAMS but appear in the
@@ -172,7 +441,9 @@ CASE_OPT_EXTRA_LINES = [
     ("muscl_polyn", "integer", "Degree of the MUSCL polynomials"),
     ("weno_num_stencils", "integer", "Number of stencils for WENO reconstruction"),
     ("wenojs", "logical", "WENO-JS (default)"),
+    ("any_state_dependent_eos", "logical", "Some fluid's coefficients vary with density"),
 ]
+COMMON_CASE_OPT_EXTRA_NAMES = {"num_dims", "num_vels", "weno_polyn", "muscl_polyn", "any_state_dependent_eos"}
 
 _CASE_OPT_DECL_COL = 24  # '::' alignment for case-opt declarations
 
@@ -221,12 +492,30 @@ def generate_case_opt_decls_fpp() -> str:
             if_lines.append(f"    {ftype}, parameter :: {name} = ${{{name}}}$  !< {desc}")
             else_lines.append(f"    {ftype.ljust(_CASE_OPT_DECL_COL)}:: {name}")
 
+    declared_names = {name for name, _, _ in CASE_OPT_EXTRA_LINES} | set(params_to_emit)
+    for name in sorted(SIM_GPU_DECL_VARS & declared_names):
+        else_lines.append(f"    $:GPU_DECLARE(create='[{name}]')")
+
     parts = [_HEADER.rstrip(), "#:if MFC_CASE_OPTIMIZATION"]
     parts.extend(if_lines)
     parts.append("#:else")
     parts.extend(else_lines)
     parts.append("#:endif")
     return "\n".join(parts) + "\n"
+
+
+def generate_common_extra_decls_fpp() -> str:
+    """Return computed-scalar declarations needed by common pre/post code."""
+    # A name here that CASE_OPT_EXTRA_LINES does not define emits nothing, leaving pre/post
+    # without a declaration that common code references. Fail on the orphan instead.
+    orphans = sorted(COMMON_CASE_OPT_EXTRA_NAMES - {name for name, _, _ in CASE_OPT_EXTRA_LINES})
+    if orphans:
+        raise ValueError(f"COMMON_CASE_OPT_EXTRA_NAMES entries missing from CASE_OPT_EXTRA_LINES: {', '.join(orphans)}.")
+    lines = [_HEADER.rstrip()]
+    for name, ftype, _ in CASE_OPT_EXTRA_LINES:
+        if name in COMMON_CASE_OPT_EXTRA_NAMES:
+            lines.append(f"{ftype.ljust(_CASE_OPT_DECL_COL)}:: {name}")
+    return "\n".join(lines) + "\n"
 
 
 # Struct roots in NAMELIST_VARS whose member-level broadcasts are irregular
@@ -384,9 +673,14 @@ def _emit_lag_params(lines: List[str]) -> None:
     from the Fortran type by upstream #1085/#1093 and are no longer in the registry.
     """
     # Walk the registry for lag_params members, split by type.
-    lag_log = sorted(k.split("%", 1)[1] for k in REGISTRY.all_params if k.startswith("lag_params%") and REGISTRY.all_params[k].param_type == ParamType.LOG)
-    lag_int = sorted(k.split("%", 1)[1] for k in REGISTRY.all_params if k.startswith("lag_params%") and REGISTRY.all_params[k].param_type in (ParamType.INT, ParamType.ANALYTIC_INT))
-    lag_real = sorted(k.split("%", 1)[1] for k in REGISTRY.all_params if k.startswith("lag_params%") and REGISTRY.all_params[k].param_type in _REAL_TYPES)
+    lag_all = sorted(k.split("%", 1)[1] for k in REGISTRY.all_params if k.startswith("lag_params%"))
+    lag_log = sorted(m for m in lag_all if REGISTRY.all_params[f"lag_params%{m}"].param_type == ParamType.LOG)
+    lag_int = sorted(m for m in lag_all if REGISTRY.all_params[f"lag_params%{m}"].param_type in (ParamType.INT, ParamType.ANALYTIC_INT))
+    lag_real = sorted(m for m in lag_all if REGISTRY.all_params[f"lag_params%{m}"].param_type in _REAL_TYPES)
+    lag_str = sorted(m for m in lag_all if REGISTRY.all_params[f"lag_params%{m}"].param_type == ParamType.STR)
+    unhandled = set(lag_all) - set(lag_log) - set(lag_int) - set(lag_real) - set(lag_str)
+    if unhandled:
+        raise ValueError(f"lag_params members with unhandled ParamType (would be silently missing from the broadcast): {sorted(unhandled)}")
     lines.append("        if (bubbles_lagrange) then")
     for mem in sorted(lag_log):
         lines.append(f"            call MPI_BCAST(lag_params%{mem}, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)")
@@ -394,6 +688,8 @@ def _emit_lag_params(lines: List[str]) -> None:
         lines.append(f"            call MPI_BCAST(lag_params%{mem}, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)")
     for mem in sorted(lag_real):
         lines.append(f"            call MPI_BCAST(lag_params%{mem}, 1, mpi_p, 0, MPI_COMM_WORLD, ierr)")
+    for mem in sorted(lag_str):
+        lines.append(f"            call MPI_BCAST(lag_params%{mem}, len(lag_params%{mem}), MPI_CHARACTER, 0, MPI_COMM_WORLD, ierr)")
     lines.append("        end if")
 
 
@@ -410,6 +706,19 @@ def _emit_chem_params(lines: List[str]) -> None:
         lines.append(f"            call MPI_BCAST(chem_params%{mem}, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)")
     for mem in sorted(chem_int):
         lines.append(f"            call MPI_BCAST(chem_params%{mem}, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)")
+    lines.append("        end if")
+
+
+def _emit_rburn(lines: List[str]) -> None:
+    """Emit the rburn member broadcast block (sim-only, under reactive_burn guard).
+
+    Members are REAL apart from the integer sub-step count, so the kind comes from the registry.
+    """
+    rburn_members = sorted(k.split("%", 1)[1] for k in REGISTRY.all_params if k.startswith("rburn%"))
+    lines.append("        if (reactive_burn) then")
+    for mem in rburn_members:
+        kind = _mpi_type_for(REGISTRY.all_params[f"rburn%{mem}"].param_type)
+        lines.append(f"            call MPI_BCAST(rburn%{mem}, 1, {kind}, 0, MPI_COMM_WORLD, ierr)")
     lines.append("        end if")
 
 
@@ -519,6 +828,10 @@ def generate_bcast_fpp(target: str) -> str:
             lines.append("        ! chem_params members (under chemistry guard)")
             _emit_chem_params(lines)
             lines.append("")
+        if "rburn" in NAMELIST_VARS and "sim" in NAMELIST_VARS["rburn"]:
+            lines.append("        ! rburn members (under reactive_burn guard)")
+            _emit_rburn(lines)
+            lines.append("")
 
     return "\n".join(lines) + "\n"
 
@@ -539,13 +852,12 @@ def resolve_namelist_content(fpp_path: Path) -> str:
 
 
 def get_generated_files(build_dir: Path) -> List[Tuple[Path, str]]:
-    """Return (path, content) for all 15 generated .fpp files under build_dir.
+    """Return (path, content) for all 18 generated .fpp files under build_dir.
 
     Paths match the cmake include directory structure:
-      build_dir/include/{full_target}/generated_{namelist,decls,constants,case_opt_decls,bcast}.fpp
-    Every target gets generated_case_opt_decls.fpp: real content for simulation,
-    a header-only stub for the others (Fypp resolves #:include at parse time, so
-    the file must exist for every target even inside a dead conditional).
+      build_dir/include/{full_target}/generated_{namelist,decls,constants,eos,case_opt_decls,bcast}.fpp
+    Every target gets generated_case_opt_decls.fpp: the full case-optimization
+    block for simulation and common computed-scalar declarations for pre/post.
     Every target gets generated_bcast.fpp with its MPI broadcast statements.
     """
     result = []
@@ -554,10 +866,20 @@ def get_generated_files(build_dir: Path) -> List[Tuple[Path, str]]:
         result.append((inc / "generated_namelist.fpp", generate_namelist_fpp(short)))
         result.append((inc / "generated_decls.fpp", generate_decls_fpp(short)))
         result.append((inc / "generated_constants.fpp", generate_constants_fpp()))
+        result.append((inc / "generated_eos.fpp", generate_eos_fpp()))
+    sim_gpu_decls = ""
     for short, full in TARGETS:
         inc = build_dir / "include" / full
-        content = generate_case_opt_decls_fpp() if short == "sim" else _HEADER + "! (no case-optimization declarations for this target)\n"
+        content = generate_case_opt_decls_fpp() if short == "sim" else generate_common_extra_decls_fpp()
+        if short == "sim":
+            sim_gpu_decls = content
         result.append((inc / "generated_case_opt_decls.fpp", content))
+    # A name here that simulation never declares emits no GPU_DECLARE, so the variable
+    # silently loses device residency. Fail on the stale entry instead.
+    sim_gpu_decls += generate_decls_fpp("sim")
+    stale = sorted(n for n in SIM_GPU_DECL_VARS if f"$:GPU_DECLARE(create='[{n}]')" not in sim_gpu_decls)
+    if stale:
+        raise ValueError(f"SIM_GPU_DECL_VARS names that simulation does not declare: {', '.join(stale)}. Remove them or restore the parameter.")
     for short, full in TARGETS:
         inc = build_dir / "include" / full
         result.append((inc / "generated_bcast.fpp", generate_bcast_fpp(short)))
