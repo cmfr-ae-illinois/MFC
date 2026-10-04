@@ -146,7 +146,6 @@ case_dict = {
     "num_ibs": N_s,
     "viscous": "T",
     "fd_order": 4,
-    "ib_neighborhood_radius": 4,
     # Formatted Database Files Structure Parameters
     "format": 1,
     "precision": 2,

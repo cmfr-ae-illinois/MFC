@@ -41,7 +41,7 @@ contains
         real(wp) :: domain_vol
 
         ! total cartesian domain volume
-        domain_vol = (x_domain%end - x_domain%beg)*(y_domain%end - y_domain%beg)*(z_domain%end - z_domain%beg)
+        domain_vol = (glb_bounds(1)%end - glb_bounds(1)%beg) * (glb_bounds(2)%end - glb_bounds(2)%beg) * (glb_bounds(3)%end - glb_bounds(3)%beg)
 
         ! coefficient used for phase averages
         avg_coeff = 1._wp/(domain_vol*fluid_volume_fraction)
