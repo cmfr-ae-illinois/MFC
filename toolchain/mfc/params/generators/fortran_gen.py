@@ -120,6 +120,21 @@ SIM_GPU_DECL_VARS = {
     "wenojs",
     "wenoz",
     "wenoz_q",
+    
+    "periodic_forcing", 
+    "forcing_wrt",
+    "mom_f_idx", 
+    "forcing_window", 
+    "forcing_start", 
+    "u_inf_ref", 
+    "rho_inf_ref", 
+    "P_inf_ref", 
+    "forcing_dt", 
+    "fluid_volume_fraction",
+    "particle_control", 
+    "particle_control_start", 
+    "particle_bf",
+
 }
 
 
