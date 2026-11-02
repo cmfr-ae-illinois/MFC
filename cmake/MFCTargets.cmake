@@ -200,18 +200,26 @@ exit 0
                     target_compile_options(${a_target} PRIVATE -fopenmp)
                     target_link_options(${a_target} PRIVATE -fopenmp)
                 elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "LLVMFlang")
+                    # GPU architecture: gfx90a (MI250X) unless MFC_AMD_GPU_ARCH overrides it.
+                    set(_amd_gpu_arch "gfx90a")
+                    if (DEFINED ENV{MFC_AMD_GPU_ARCH})
+                        set(_amd_gpu_arch "$ENV{MFC_AMD_GPU_ARCH}")
+                    endif()
                     # assume-no-nested-parallelism is for correctness, not speed: the two
                     # oversubscription flags are the trigger for llvm/llvm-project#198621
                     # (a suffix of loop iterations silently skipped), which -O3 happens to
                     # mask today. Codegen is unchanged on amdflang; it is a win on upstream
                     # flang.
+                    # assume-no-thread-state: no kernel changes OpenMP ICVs on the device, so
+                    # the per-kernel thread-state bookkeeping is dropped (~1.2x on AFAR 24.3).
                     target_compile_options(${a_target} PRIVATE
                         -fopenmp
-                        --offload-arch=gfx90a
+                        --offload-arch=${_amd_gpu_arch}
                         -O3
                         -fopenmp-assume-threads-oversubscription
                         -fopenmp-assume-teams-oversubscription
-                        -fopenmp-assume-no-nested-parallelism)
+                        -fopenmp-assume-no-nested-parallelism
+                        -fopenmp-assume-no-thread-state)
                     # attributor-max-pi-accesses: amdflang generates device code for the WHOLE
                     # image at link time, and once the image carries enough target regions the
                     # device link's Attributor exceeds its AAPointerInfo access cap on a
@@ -222,8 +230,9 @@ exit 0
                     # Raising the cap restores full pointer precision for the whole image and
                     # makes kernel quality independent of unrelated edits, at the price of a
                     # longer device link. See docs/documentation/gpuParallelization.md
-                    # ("AMD flang known issues") for the failure signature.
-                    target_link_options(${a_target} PRIVATE -fopenmp --offload-arch=gfx90a -flto-partitions=${MFC_BUILD_JOBS}
+                    # ("AMD flang known issues") for the failure signature. Still needed on AFAR 24.3
+                    # (cap unchanged; ROCm/llvm-project#4070).
+                    target_link_options(${a_target} PRIVATE -fopenmp --offload-arch=${_amd_gpu_arch} -flto-partitions=${MFC_BUILD_JOBS}
                         "SHELL:-Xoffload-linker -mllvm -Xoffload-linker -attributor-max-pi-accesses=16384")
 
                     # Weak device stubs for symbols AFAR 24.3's device flang runtime
@@ -234,7 +243,7 @@ exit 0
                     set(_rt_stubs_src "${CMAKE_SOURCE_DIR}/cmake/amdflang_device_stubs.c")
                     set(_rt_stubs "${CMAKE_CURRENT_BINARY_DIR}/${a_target}_amdflang_device_stubs.o")
                     add_custom_command(OUTPUT "${_rt_stubs}"
-                        COMMAND "${MFC_AMDCLANG}" -O2 -fopenmp --offload-arch=gfx90a -c "${_rt_stubs_src}" -o "${_rt_stubs}"
+                        COMMAND "${MFC_AMDCLANG}" -O2 -fopenmp --offload-arch=${_amd_gpu_arch} -c "${_rt_stubs_src}" -o "${_rt_stubs}"
                         DEPENDS "${_rt_stubs_src}")
                     target_sources(${a_target} PRIVATE "${_rt_stubs}")
                 endif()

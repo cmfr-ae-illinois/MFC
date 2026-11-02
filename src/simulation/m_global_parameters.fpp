@@ -9,7 +9,7 @@
 module m_global_parameters
 
 #ifdef MFC_MPI
-    use mpi  !< Message passing interface (MPI) module
+    use mpi
 #endif
 
     use m_derived_types
@@ -286,8 +286,7 @@ module m_global_parameters
     !> @{
     !> @}
 
-    real(wp)                                    :: mytime     !< Current simulation time
-    real(wp)                                    :: finaltime  !< Final simulation time
+    real(wp)                                    :: mytime  !< Current simulation time
     type(pres_field), allocatable, dimension(:) :: pb_ts
     type(pres_field), allocatable, dimension(:) :: mv_ts
 
@@ -521,6 +520,8 @@ contains
         ib_force_wrt = .false.
         ib_force_stride = 1
         many_ib_patch_parallelism = .false.
+        ib_second_order_vel = .false.
+        ib_ip_min_dist = 0._wp
 
         ! Bubble modeling (sim-specific)
         bubble_model = 1
@@ -693,6 +694,11 @@ contains
             patch_ib(i)%airfoil_id = 0
             patch_ib(i)%model_id = 0
             patch_ib(i)%slip = .false.
+
+            patch_ib(i)%thermal_bc = 0
+            patch_ib(i)%Twall = 0._wp
+            patch_ib(i)%surface_reaction = 0
+
             patch_ib(i)%v_blow = 0._wp
             patch_ib(i)%inj_species = 0
             patch_ib(i)%burn_rate_exp = 0._wp
@@ -917,24 +923,6 @@ contains
             allocate (MPI_IO_DATA%var(1:sys_size))
         end if
 
-        if (.not. down_sample) then
-            do i = 1, sys_size
-                allocate (MPI_IO_DATA%var(i)%sf(0:m,0:n,0:p))
-                MPI_IO_DATA%var(i)%sf => null()
-            end do
-        end if
-        if (bubbles_euler .and. qbmm .and. .not. polytropic) then
-            do i = sys_size + 1, sys_size + 2*nb*nnode
-                allocate (MPI_IO_DATA%var(i)%sf(0:m,0:n,0:p))
-                MPI_IO_DATA%var(i)%sf => null()
-            end do
-        else if (bubbles_lagrange) then
-            do i = 1, sys_size + 1
-                allocate (MPI_IO_DATA%var(i)%sf(0:m,0:n,0:p))
-                MPI_IO_DATA%var(i)%sf => null()
-            end do
-        end if
-
         ! Configure WENO averaging flag (arithmetic mean vs. unaltered values)
         wa_flg = 0._wp; if (weno_avg) wa_flg = 1._wp
         $:GPU_UPDATE(device='[wa_flg]')
@@ -943,8 +931,6 @@ contains
         #:if not MFC_CASE_OPTIMIZATION
             wenojs = .not. (mapped_weno .or. wenoz .or. teno)
         #:endif
-
-        if (ib) allocate (MPI_IO_IB_DATA%var%sf(0:m,0:n,0:p))
 
         if (hypoelasticity .or. mhd .or. probe_wrt .or. ib .or. bubbles_lagrange) then
             fd_number = max(1, fd_order/2)
@@ -1012,7 +998,7 @@ contains
 
         $:GPU_UPDATE(device='[alt_soundspeed, acoustic_source, num_source]')
         $:GPU_UPDATE(device='[dt, sys_size, buff_size, eqn_idx, mpp_lim, bubbles_euler, hypoelasticity, alt_soundspeed, &
-                     & avg_state, model_eqns, mixture_err, grid_geometry, cyl_coord, mp_weno, weno_eps, teno_CT, low_Mach]')
+                     & avg_state, model_eqns, mixture_err, grid_geometry, cyl_coord, mp_weno, weno_eps, teno_CT, low_Mach, ib]')
         $:GPU_UPDATE(device='[riemann_hypo_ADC, ADC_kappa, hll_u_interface, hypo_hll_interface_rhs, hypo_nc_mode]')
 
         $:GPU_UPDATE(device='[Bx0]')
