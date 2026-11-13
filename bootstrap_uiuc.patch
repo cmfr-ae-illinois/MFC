@@ -1,0 +1,28 @@
+--- a/toolchain/bootstrap/modules.sh
++++ b/toolchain/bootstrap/modules.sh
+@@ -51,8 +51,9 @@
+     log   "$B""DoD$W:     Carpenter Cray (cc) | Carpenter GNU (c) |  Nautilus (n)"
+     log   "$OR""Florida$W: HiPerGator (h)"
+     log   "$C""WPI $W:   Turing   (t)"
++    log   "$C""UIUC$W:    Campus Cluster (uiuc)"
+     log   "$R""AMD$W:     HPCFund  (amdfund)"
+-    log_n "(${G}a${W}/${G}f${W}/${G}famd${W}/${G}w${W}/${B}tuo${W}/${B}tamd${W}/${C}b${W}/${C}e${CR}/${C}d/${C}dai${CR}/${Y}p${CR}/${Y}pifx${CR}/${C}san${CR}/${R}r${CR}/${B}cc${CR}/${B}c${CR}/${B}n${CR}/${BR}o${CR}/${BR}pa${CR}/${OR}i${CR}/${OR}h${CR}/${C}t${CR}/${R}amdfund${CR}): "
++    log_n "(${G}a${W}/${G}f${W}/${G}famd${W}/${G}w${W}/${B}tuo${W}/${B}tamd${W}/${C}b${W}/${C}e${CR}/${C}d/${C}dai${CR}/${Y}p${CR}/${Y}pifx${CR}/${C}san${CR}/${R}r${CR}/${B}cc${CR}/${B}c${CR}/${B}n${CR}/${BR}o${CR}/${BR}pa${CR}/${OR}i${CR}/${OR}h${CR}/${C}t${CR}/${R}amdfund${CR}/${C}uiuc${CR}): "
+     read u_c
+     log
+ fi
+@@ -189,6 +190,14 @@
+     module purge > /dev/null 2>&1
+ fi
+ 
++# UIUC: expose the user-installed SDK before loading nvhpc/25.5.
++# Environment assignments in toolchain/modules are applied after module load.
++if [ "$u_c" == "uiuc" ] && [ "$cg" == "gpu" ]; then
++    module purge > /dev/null 2>&1 || return 1
++    export NVHPC_ROOT="${NVHPC_ROOT:-$HOME/opt/nvidia/hpc_sdk/Linux_x86_64/25.5}"
++    module use "$NVHPC_ROOT/../../modulefiles" || return 1
++fi
++
+ # Collect the module names a line at a time. __extract() concatenates every
+ # matching line, which would let one line's assignments swallow the next line's
+ # module names, so the assignment-aware split has to happen per line.

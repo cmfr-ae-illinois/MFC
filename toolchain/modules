@@ -88,6 +88,16 @@ d-gpu PrgEnv-nvidia/8.7.0
 d-gpu CC=nvc CXX=nvc++ FC=nvfortran
 d-gpu MFC_CUDA_CC=80,86
 
+# UIUC Campus Cluster: H100 GPU profile.
+# Requires the UIUC module-use hook in toolchain/bootstrap/modules.sh.
+uiuc     UIUC Campus Cluster (H100)
+uiuc-all gcc/12.4.0 python/3.11.11
+uiuc-gpu nvhpc/25.5
+uiuc-gpu NVHPC_ROOT=${NVHPC_ROOT:-$HOME/opt/nvidia/hpc_sdk/Linux_x86_64/25.5}
+uiuc-gpu NVHPC_CUDA_HOME=$NVHPC_ROOT/cuda/12.9 NVCOMPILER_COMM_LIBS_HOME=$NVHPC_ROOT/comm_libs/12.9
+uiuc-gpu CC=nvc CXX=nvc++ FC=nvfortran
+uiuc-gpu MFC_CUDA_CC=90 OMP_NUM_THREADS=1
+
 o     Brown Oscar
 o-all python
 o-cpu hpcx-mpi python/3.13.5
