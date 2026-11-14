@@ -203,6 +203,13 @@ done
 MODULES="$(echo "$MODULES" | xargs)"
 unset _suffix _entry
 
+# Expose the user-installed NVIDIA SDK before loading its module.
+if [ "$u_c" == "uiuc" ] && [ "$cg" == "gpu" ]; then
+    module purge > /dev/null 2>&1 || return 1
+    export NVHPC_ROOT="${NVHPC_ROOT:-$HOME/opt/nvidia/hpc_sdk/Linux_x86_64/25.5}"
+    module use "$NVHPC_ROOT/../../modulefiles" || return 1
+fi
+
 log " $ module load $MODULES"
 if ! module load $MODULES; then
     error "Failed to load modules."
